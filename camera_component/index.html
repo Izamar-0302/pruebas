@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    background: transparent;
+  }
+  #wrap { display: flex; flex-direction: column; gap: 10px; padding: 4px; }
+  .row { display: flex; gap: 8px; }
+  select, button {
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid #EAE3D9;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    background: #FFFFFF;
+    color: #2C1A11;
+  }
+  select { flex: 1; }
+  button.primary { background: #2C1A11; color: #FAF7F2; border: none; flex: 1; }
+  button.secondary { flex: 1; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  video, canvas, img.preview {
+    width: 100%;
+    border-radius: 16px;
+    background: #000;
+    display: none;
+  }
+  #status { font-size: 12px; color: #B45309; min-height: 16px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="row">
+    <select id="facingSelect">
+      <option value="environment" selected>📷 Camara trasera</option>
+      <option value="user">🤳 Camara frontal</option>
+    </select>
+    <button id="startBtn" class="secondary" type="button">Activar camara</button>
+  </div>
+  <div id="status"></div>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <img id="preview" class="preview" />
+  <div class="row" id="captureRow" style="display:none;">
+    <button id="captureBtn" class="primary" type="button">📸 Capturar foto</button>
+    <button id="retryBtn" class="secondary" type="button" style="display:none;">🔄 Tomar otra</button>
+  </div>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const preview = document.getElementById('preview');
+const startBtn = document.getElementById('startBtn');
+const captureBtn = document.getElementById('captureBtn');
+const retryBtn = document.getElementById('retryBtn');
+const facingSelect = document.getElementById('facingSelect');
+const captureRow = document.getElementById('captureRow');
+const statusEl = document.getElementById('status');
+let stream = null;
+
+function sendValue(value) {
+  window.parent.postMessage({
+    type: "streamlit:setComponentValue",
+    value: value,
+    dataType: "json"
+  }, "*");
+}
+
+function setFrameHeight() {
+  const h = document.getElementById('wrap').scrollHeight + 16;
+  window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
+}
+
+async function startCamera() {
+  stopCamera();
+  statusEl.textContent = "";
+  const facingMode = facingSelect.value;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facingMode } },
+      audio: false
+    });
+    video.srcObject = stream;
+    video.style.display = 'block';
+    preview.style.display = 'none';
+    captureRow.style.display = 'flex';
+    captureBtn.style.display = 'inline-block';
+    retryBtn.style.display = 'none';
+    startBtn.textContent = 'Reiniciar camara';
+  } catch (err) {
+    statusEl.textContent = "No se pudo acceder a la camara: " + err.message;
+    sendValue({ error: String(err) });
+  }
+  setTimeout(setFrameHeight, 200);
+}
+
+function stopCamera() {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+}
+
+function capturePhoto() {
+  const w = video.videoWidth || 640;
+  const h = video.videoHeight || 480;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, w, h);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+  preview.src = dataUrl;
+  preview.style.display = 'block';
+  video.style.display = 'none';
+  captureBtn.style.display = 'none';
+  retryBtn.style.display = 'inline-block';
+  stopCamera();
+  sendValue({ image: dataUrl, facing: facingSelect.value, ts: Date.now() });
+  setTimeout(setFrameHeight, 200);
+}
+
+function retry() {
+  preview.style.display = 'none';
+  startCamera();
+}
+
+startBtn.addEventListener('click', startCamera);
+captureBtn.addEventListener('click', capturePhoto);
+retryBtn.addEventListener('click', retry);
+facingSelect.addEventListener('change', () => { if (stream) startCamera(); });
+
+window.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'streamlit:render') {
+    setFrameHeight();
+  }
+});
+
+window.parent.postMessage({ type: "streamlit:componentReady", apiVersion: 1 }, "*");
+setTimeout(setFrameHeight, 150);
+</script>
+</body>
+</html>
