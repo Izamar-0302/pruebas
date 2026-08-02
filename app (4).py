@@ -25,7 +25,7 @@ st.set_page_config(
 # MODELO ENTRENADO (cargado desde este repositorio)
 # ----------------------------------------------------
 MODEL_DIR = "model"
-MODEL_PATH_KERAS = os.path.join(MODEL_DIR, "agrodetect_mobilenetv2.keras")
+MODEL_PATH_KERAS = os.path.join(MODEL_DIR, "agrodetect_mobilenetv2.keras.zip")
 MODEL_PATH_H5 = os.path.join(MODEL_DIR, "model.weights.h5")
 CONFIG_PATH = os.path.join(MODEL_DIR, "config.json")
 
@@ -37,14 +37,7 @@ MARGEN_COINFECCION = 0.15
 
 @st.cache_resource(show_spinner="Cargando modelo de IA...")
 def cargar_modelo():
-    if os.path.exists(MODEL_PATH_KERAS):
-        return keras.models.load_model(MODEL_PATH_KERAS)
-    if os.path.exists(MODEL_PATH_H5):
-        return keras.models.load_model(MODEL_PATH_H5)
-    raise FileNotFoundError(
-        f"No se encontró el modelo en '{MODEL_PATH_KERAS}' ni en '{MODEL_PATH_H5}'. "
-        "Verifica que la carpeta 'model/' esté presente en el repositorio."
-    )
+    return keras.models.load_model(MODEL_PATH_KERAS)
 
 
 @st.cache_data(show_spinner=False)
