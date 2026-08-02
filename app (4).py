@@ -15,6 +15,12 @@ from PIL import Image
 from tensorflow import keras
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+
 # ====================================================
 # AGRODETECT v2.0 - CAFICULTURA HONDURAS (IHCAFE)
 # ====================================================
@@ -56,6 +62,68 @@ def capturar_foto_camara(key="camara_agrodetect"):
     if foto is not None:
         return Image.open(foto)
     return None
+
+
+# ----------------------------------------------------
+# EXPORTAR DIAGNOSTICO(S) A PDF
+# ----------------------------------------------------
+def generar_pdf_diagnosticos(diagnosticos):
+    """
+    Genera un PDF con uno o varios diagnosticos (lista de items del historial).
+    Devuelve un BytesIO listo para descargar con st.download_button.
+    """
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter,
+        topMargin=2*cm, bottomMargin=2*cm, leftMargin=2*cm, rightMargin=2*cm
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle("TituloReporte", parent=styles["Title"], fontSize=20, spaceAfter=6)
+    subtitulo_style = ParagraphStyle("Subtitulo", parent=styles["Normal"], fontSize=10,
+                                      textColor=colors.HexColor("#6B5E55"), spaceAfter=20)
+    seccion_titulo_style = ParagraphStyle("SeccionTitulo", parent=styles["Heading2"], fontSize=14,
+                                           textColor=colors.HexColor("#2C1A11"), spaceBefore=10, spaceAfter=6)
+    campo_style = ParagraphStyle("Campo", parent=styles["Normal"], fontSize=11, spaceAfter=4)
+    rec_titulo_style = ParagraphStyle("RecTitulo", parent=styles["Normal"], fontSize=11,
+                                       fontName="Helvetica-Bold", spaceBefore=8, spaceAfter=2)
+    rec_texto_style = ParagraphStyle("RecTexto", parent=styles["Normal"], fontSize=10,
+                                      textColor=colors.HexColor("#333333"), spaceAfter=6, leading=14)
+
+    story = [
+        Paragraph("AgroDetect - Informe de Diagnostico Foliar", titulo_style),
+        Paragraph(f"Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')} · Soporte IHCAFE", subtitulo_style),
+    ]
+
+    for i, diag in enumerate(diagnosticos):
+        info = COFFEE_DISEASES.get(diag["primaryDisease"], COFFEE_DISEASES["sana"])
+        conf = f"{diag['primaryConfidence']*100:.1f}%"
+
+        story.append(Paragraph(f"Diagnostico #{i+1}: {info['name']}", seccion_titulo_style))
+        story.append(Paragraph(f"<b>Nombre cientifico:</b> {info.get('scientificName', 'N/A')}", campo_style))
+        story.append(Paragraph(f"<b>Categoria:</b> {info['category']}", campo_style))
+        story.append(Paragraph(f"<b>Gravedad:</b> {info['severity']}", campo_style))
+        story.append(Paragraph(f"<b>Confianza IA:</b> {conf}", campo_style))
+        story.append(Paragraph(f"<b>Fecha:</b> {diag['timestamp']}", campo_style))
+
+        if diag.get("coinfeccion"):
+            story.append(Paragraph(f"<b>Nota:</b> {diag['coinfeccion']}", campo_style))
+
+        story.append(Spacer(1, 8))
+
+        rec_data = diag.get("recommendation", [])
+        if isinstance(rec_data, list):
+            for sec in rec_data:
+                story.append(Paragraph(f"{sec.get('num', '')}. {sec.get('titulo', '')}", rec_titulo_style))
+                story.append(Paragraph(sec.get('texto', ''), rec_texto_style))
+        elif isinstance(rec_data, str) and rec_data:
+            story.append(Paragraph(rec_data, rec_texto_style))
+
+        if i < len(diagnosticos) - 1:
+            story.append(PageBreak())
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 
 # ----------------------------------------------------
@@ -540,8 +608,19 @@ with col_nav2:
 with col_nav3:
     c1, c2 = st.columns([2, 1])
     with c1:
-        if st.button("📄 EXPORTAR PDF", use_container_width=True):
-            st.toast("Generando informe PDF...", icon="📄")
+        cd_export = st.session_state.current_diag
+        if cd_export is not None:
+            pdf_buffer = generar_pdf_diagnosticos([cd_export])
+            st.download_button(
+                "📄 EXPORTAR PDF",
+                data=pdf_buffer,
+                file_name=f"diagnostico_{cd_export['id']}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        else:
+            if st.button("📄 EXPORTAR PDF", use_container_width=True):
+                st.warning("Aun no hay ningun diagnostico para exportar.")
     with c2:
         lbl = "🌙" if is_dark else "☀️"
         if st.button(lbl, use_container_width=True):
@@ -724,6 +803,14 @@ elif tab_choice == "HISTORIAL":
     st.subheader("📜 Historial de Diagnosticos Foliares")
     if not st.session_state.history:
         st.info("Aun no hay diagnosticos registrados.")
+    else:
+        pdf_buffer_all = generar_pdf_diagnosticos(st.session_state.history)
+        st.download_button(
+            "📄 Exportar todo el historial a PDF",
+            data=pdf_buffer_all,
+            file_name="historial_agrodetect.pdf",
+            mime="application/pdf",
+        )
     for item in st.session_state.history:
         d_meta = COFFEE_DISEASES[item["primaryDisease"]]
         render_html(f"""
