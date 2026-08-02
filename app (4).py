@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import base64
 import json
 import os
@@ -46,41 +45,16 @@ def render_html(html_content: str):
 
 
 # ----------------------------------------------------
-# COMPONENTE DE CAMARA PERSONALIZADO (TRASERA / FRONTAL)
+# CAPTURA DE FOTO CON WIDGET NATIVO DE STREAMLIT
 # ----------------------------------------------------
-
-_CAMERA_COMPONENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_component")
-st.write("🔍 Ruta calculada:", _CAMERA_COMPONENT_DIR)
-st.write("🔍 ¿Existe carpeta?:", os.path.exists(_CAMERA_COMPONENT_DIR))
-if os.path.exists(_CAMERA_COMPONENT_DIR):
-    st.write("🔍 Contenido:", os.listdir(_CAMERA_COMPONENT_DIR))
-    idx_path = os.path.join(_CAMERA_COMPONENT_DIR, "index.html")
-    st.write("🔍 ¿Existe index.html?:", os.path.exists(idx_path))
-    if os.path.exists(idx_path):
-        st.write("🔍 Tamaño index.html (bytes):", os.path.getsize(idx_path))
-_camera_capture_component = components.declare_component("camera_capture", path=_CAMERA_COMPONENT_DIR)
-
-
 def capturar_foto_camara(key="camara_agrodetect"):
     """
-    Muestra el widget de camara (con selector de camara trasera/frontal) y
-    devuelve una PIL.Image si el usuario capturo una foto, o None si aun no
-    ha capturado nada o hubo un error de permisos de camara.
+    Muestra el widget nativo de camara de Streamlit y devuelve una PIL.Image
+    si el usuario capturo una foto, o None si aun no ha capturado nada.
     """
-    resultado = _camera_capture_component(key=key, default=None)
-    if resultado and isinstance(resultado, dict):
-        if resultado.get("error"):
-            st.warning(f"⚠️ No se pudo acceder a la camara: {resultado['error']}")
-            return None
-        data_url = resultado.get("image")
-        if data_url:
-            try:
-                _, encoded = data_url.split(",", 1)
-                img_bytes = base64.b64decode(encoded)
-                return Image.open(BytesIO(img_bytes))
-            except Exception:
-                st.warning("⚠️ No se pudo procesar la foto capturada. Intenta de nuevo.")
-                return None
+    foto = st.camera_input("Toma una foto de la hoja de café", key=key, label_visibility="collapsed")
+    if foto is not None:
+        return Image.open(foto)
     return None
 
 
