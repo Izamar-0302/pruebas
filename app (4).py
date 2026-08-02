@@ -16,7 +16,7 @@ from tensorflow import keras
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import cm
@@ -65,6 +65,26 @@ def capturar_foto_camara(key="camara_agrodetect"):
 
 
 # ----------------------------------------------------
+# ALMACENAMIENTO DE IMAGENES DE DIAGNOSTICO
+# ----------------------------------------------------
+IMAGES_DIR = "diagnosis_images"
+os.makedirs(IMAGES_DIR, exist_ok=True)
+
+
+def guardar_imagen_diagnostico(imagen_pil, diag_id):
+    """
+    Guarda la imagen foliar asociada a un diagnostico en disco (JPEG)
+    y devuelve la ruta relativa del archivo guardado.
+    """
+    try:
+        ruta = os.path.join(IMAGES_DIR, f"{diag_id}.jpg")
+        imagen_pil.convert("RGB").save(ruta, "JPEG", quality=88)
+        return ruta
+    except Exception:
+        return None
+
+
+# ----------------------------------------------------
 # EXPORTAR DIAGNOSTICO(S) A PDF
 # ----------------------------------------------------
 def generar_pdf_diagnosticos(diagnosticos):
@@ -99,6 +119,23 @@ def generar_pdf_diagnosticos(diagnosticos):
         conf = f"{diag['primaryConfidence']*100:.1f}%"
 
         story.append(Paragraph(f"Diagnostico #{i+1}: {info['name']}", seccion_titulo_style))
+
+        # ---- Imagen de la hoja analizada (si existe) ----
+        img_path = diag.get("image_path")
+        if img_path and os.path.exists(img_path):
+            try:
+                pil_img = Image.open(img_path)
+                img_w, img_h = pil_img.size
+                max_w = 8 * cm
+                max_h = 7 * cm
+                ratio = min(max_w / img_w, max_h / img_h)
+                rl_img = RLImage(img_path, width=img_w * ratio, height=img_h * ratio)
+                rl_img.hAlign = "LEFT"
+                story.append(rl_img)
+                story.append(Spacer(1, 10))
+            except Exception:
+                pass
+
         story.append(Paragraph(f"<b>Nombre cientifico:</b> {info.get('scientificName', 'N/A')}", campo_style))
         story.append(Paragraph(f"<b>Categoria:</b> {info['category']}", campo_style))
         story.append(Paragraph(f"<b>Gravedad:</b> {info['severity']}", campo_style))
@@ -573,6 +610,9 @@ st.markdown(f"""
 
     .brand-title {{ font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; color: {text_main}; }}
     .brand-version {{ font-size: 11px; font-family: monospace; color: #D97706; margin-left: 6px; }}
+    .brand-bean {{
+        display: inline-block; vertical-align: -3px; width: 17px; height: 17px; margin: 0 1px;
+    }}
 
     .rec-section {{ display: flex; gap: 14px; align-items: flex-start; padding: 14px 0; border-bottom: 1px solid {border_color}; }}
     .rec-section:last-child {{ border-bottom: none; }}
@@ -598,11 +638,19 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ----------------------------------------------------
+# ICONO: GRANO DE CAFE (reemplaza la "o" de AgroDetect)
+# ----------------------------------------------------
+BEAN_ICON = """<svg class="brand-bean" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <ellipse cx="12" cy="12" rx="9.5" ry="7" fill="#6F4E37" transform="rotate(48 12 12)"/>
+    <path d="M12 5.5 C9.5 8.5 9.5 15.5 12 18.5" stroke="#2C1A11" stroke-width="1.6" fill="none" stroke-linecap="round" transform="rotate(48 12 12)"/>
+</svg>"""
+
+# ----------------------------------------------------
 # NAVBAR
 # ----------------------------------------------------
 col_nav1, col_nav2, col_nav3 = st.columns([2, 3, 2])
 with col_nav1:
-    render_html(f'<div style="display:flex; align-items:baseline;"><span class="brand-title">AgroDetect</span><span class="brand-version">v2.0</span></div>')
+    render_html(f'<div style="display:flex; align-items:baseline;"><span class="brand-title">Agr{BEAN_ICON}Detect</span><span class="brand-version">v2.0</span></div>')
 with col_nav2:
     tab_choice = st.radio("", ["DIAGNOSTICO", "HISTORIAL", "GUIAS TECNICAS", "GITHUB"], horizontal=True, label_visibility="collapsed")
 with col_nav3:
@@ -678,13 +726,16 @@ if tab_choice == "DIAGNOSTICO":
                                 f"🔎 Posible coinfeccion con {COFFEE_DISEASES[resultado['clase_secundaria']]['name']} "
                                 f"({resultado['confianza_secundaria']*100:.1f}%). Se recomienda inspeccion adicional."
                             )
+                        diag_id = f"DIAG-{int(datetime.now().timestamp())}"
+                        image_path = guardar_imagen_diagnostico(image, diag_id)
                         new_item = {
-                            "id": f"DIAG-{int(datetime.now().timestamp())}",
+                            "id": diag_id,
                             "primaryDisease": resultado["clase"],
                             "primaryConfidence": resultado["confianza"],
                             "timestamp": datetime.now().strftime("%d/%m/%Y %H:%M"),
                             "recommendation": rec,
                             "coinfeccion": coinf,
+                            "image_path": image_path,
                         }
                         st.session_state.history.insert(0, new_item)
                         st.session_state.current_diag = new_item
@@ -725,6 +776,9 @@ if tab_choice == "DIAGNOSTICO":
                 <span style="font-size:11px; font-family:monospace; color:#9CA3AF;">{cd['timestamp']}</span>
             </div>
             """)
+
+            if cd.get("image_path") and os.path.exists(cd["image_path"]):
+                st.image(cd["image_path"], use_container_width=True)
 
             ct, cp = st.columns([2, 1])
             with ct:
@@ -813,14 +867,19 @@ elif tab_choice == "HISTORIAL":
         )
     for item in st.session_state.history:
         d_meta = COFFEE_DISEASES[item["primaryDisease"]]
-        render_html(f"""
-        <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:12px;">
-            <span style="background-color:{d_meta['color']}; color:white; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:12px;">{d_meta['name']}</span>
-            <span style="float:right; font-size:11px; color:gray;">{item['timestamp']}</span>
-            <h4 style="margin-top:10px; margin-bottom:4px;">Certeza: {item['primaryConfidence']*100:.1f}%</h4>
-            <p style="font-size:12px; color:{text_sub};">{item.get('recommendation','')}</p>
-        </div>
-        """)
+        col_h_img, col_h_txt = st.columns([1, 4])
+        with col_h_img:
+            if item.get("image_path") and os.path.exists(item["image_path"]):
+                st.image(item["image_path"], use_container_width=True)
+        with col_h_txt:
+            render_html(f"""
+            <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:12px;">
+                <span style="background-color:{d_meta['color']}; color:white; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:12px;">{d_meta['name']}</span>
+                <span style="float:right; font-size:11px; color:gray;">{item['timestamp']}</span>
+                <h4 style="margin-top:10px; margin-bottom:4px;">Certeza: {item['primaryConfidence']*100:.1f}%</h4>
+                <p style="font-size:12px; color:{text_sub};">{item.get('recommendation','')}</p>
+            </div>
+            """)
 
 # ----------------------------------------------------
 # TAB: GUIAS TECNICAS
