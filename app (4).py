@@ -8,6 +8,9 @@ import tensorflow as tf
 from PIL import Image
 from tensorflow import keras
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+import shutil
+import tempfile
+# ... tus otras imports ...
 
 # ====================================================
 # AGRODETECT v2.0 - CAFICULTURA HONDURAS (IHCAFE)
@@ -29,15 +32,33 @@ MODEL_PATH_KERAS = os.path.join(MODEL_DIR, "agrodetect_mobilenetv2.keras.zip")
 MODEL_PATH_H5 = os.path.join(MODEL_DIR, "model.weights.h5")
 CONFIG_PATH = os.path.join(MODEL_DIR, "config.json")
 
+
+@st.cache_resource(show_spinner="Cargando modelo de IA...")
+def cargar_modelo():
+    # Keras 3 exige que el archivo tenga extensión .keras para reconocerlo.
+    # Como GitHub descomprime los .keras al subirlos por web, lo renombraste a .zip.
+    # Lo copiamos a un archivo temporal con la extensión correcta y cargamos desde ahí.
+    if os.path.exists(MODEL_PATH_KERAS):
+        temp_path = os.path.join(tempfile.gettempdir(), "agrodetect_temp.keras")
+        shutil.copy(MODEL_PATH_KERAS, temp_path)
+        return keras.models.load_model(temp_path)
+    
+    # Fallback: si GitHub descomprimió todo y no existe el .zip,
+    # reconstruimos desde config.json + model.weights.h5
+    if os.path.exists(CONFIG_PATH) and os.path.exists(MODEL_PATH_H5):
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        model = keras.models.model_from_json(json.dumps(config))
+        model.load_weights(MODEL_PATH_H5)
+        return model
+    
+    raise FileNotFoundError("No se encontró el modelo en ningún formato compatible.")
+
 CLASES_DEFAULT = ["sana", "roya", "cercospora", "phoma", "arana_roja", "minador"]
 IMG_SIZE_DEFAULT = (224, 224)
 UMBRAL_DEFAULT = 0.60
 MARGEN_COINFECCION = 0.15
 
-
-@st.cache_resource(show_spinner="Cargando modelo de IA...")
-def cargar_modelo():
-    return keras.models.load_model(MODEL_PATH_KERAS)
 
 
 @st.cache_data(show_spinner=False)
