@@ -65,12 +65,21 @@ const captureRow = document.getElementById('captureRow');
 const statusEl = document.getElementById('status');
 let stream = null;
 
+const SET_COMPONENT_VALUE = "streamlit:setComponentValue";
+const RENDER = "streamlit:render";
+const COMPONENT_READY = "streamlit:componentReady";
+const SET_FRAME_HEIGHT = "streamlit:setFrameHeight";
+
+function _sendMessage(type, data) {
+  const outboundData = Object.assign({
+    isStreamlitMessage: true,
+    type: type,
+  }, data);
+  window.parent.postMessage(outboundData, "*");
+}
+
 function sendValue(value) {
-  window.parent.postMessage({
-    type: "streamlit:setComponentValue",
-    value: value,
-    dataType: "json"
-  }, "*");
+  _sendMessage(SET_COMPONENT_VALUE, { value: value, dataType: "json" });
 }
 
 let _lastHeight = 0;
@@ -78,7 +87,7 @@ function setFrameHeight() {
   const h = Math.ceil(document.getElementById('wrap').getBoundingClientRect().height) + 16;
   if (Math.abs(h - _lastHeight) < 3) return; // evita bucles por diferencias de subpixel
   _lastHeight = h;
-  window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
+  _sendMessage(SET_FRAME_HEIGHT, { height: h });
 }
 
 let _resizeTimer = null;
@@ -148,7 +157,7 @@ captureBtn.addEventListener('click', capturePhoto);
 retryBtn.addEventListener('click', retry);
 facingSelect.addEventListener('change', () => { if (stream) startCamera(); });
 
-window.parent.postMessage({ type: "streamlit:componentReady", apiVersion: 1 }, "*");
+_sendMessage(COMPONENT_READY, { apiVersion: 1 });
 setTimeout(setFrameHeight, 150);
 </script>
 </body>
