@@ -84,24 +84,6 @@ def guardar_imagen_diagnostico(imagen_pil, diag_id):
         return None
 
 
-def imagen_html_embed(path, height="260px", radius="18px", border_col="#EAE3D9"):
-    """
-    Codifica una imagen en base64 y la devuelve como <img> embebido en HTML,
-    con bordes redondeados y sombra suave para que combine con el diseno de tarjetas.
-    """
-    try:
-        with open(path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        return (
-            f'<img src="data:image/jpeg;base64,{b64}" '
-            f'style="width:100%; height:{height}; object-fit:cover; border-radius:{radius}; '
-            f'border:1px solid {border_col}; box-shadow:0 4px 14px rgba(44,26,17,0.18); '
-            f'margin-bottom:16px; display:block;" />'
-        )
-    except Exception:
-        return ""
-
-
 # ----------------------------------------------------
 # EXPORTAR DIAGNOSTICO(S) A PDF
 # ----------------------------------------------------
@@ -770,6 +752,7 @@ if tab_choice == "DIAGNOSTICO":
                         st.session_state.current_diag = new_item
                         guardar_historial()
                         st.success("¡Diagnostico completado con exito!")
+                        st.rerun()
 
         render_html("<br>")
         render_html("<p style='font-size:10px; font-weight:bold; letter-spacing:1px; color:#8C7D73;'>RETROALIMENTACION:</p>")
@@ -805,9 +788,6 @@ if tab_choice == "DIAGNOSTICO":
                 <span style="font-size:11px; font-family:monospace; color:#9CA3AF;">{cd['timestamp']}</span>
             </div>
             """)
-
-            if cd.get("image_path") and os.path.exists(cd["image_path"]):
-                render_html(imagen_html_embed(cd["image_path"], height="280px", radius="18px", border_col=border_color))
 
             ct, cp = st.columns([2, 1])
             with ct:
@@ -896,19 +876,14 @@ elif tab_choice == "HISTORIAL":
         )
     for item in st.session_state.history:
         d_meta = COFFEE_DISEASES[item["primaryDisease"]]
-        col_h_img, col_h_txt = st.columns([1, 4])
-        with col_h_img:
-            if item.get("image_path") and os.path.exists(item["image_path"]):
-                render_html(imagen_html_embed(item["image_path"], height="120px", radius="14px", border_col=border_color))
-        with col_h_txt:
-            render_html(f"""
-            <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:12px;">
-                <span style="background-color:{d_meta['color']}; color:white; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:12px;">{d_meta['name']}</span>
-                <span style="float:right; font-size:11px; color:gray;">{item['timestamp']}</span>
-                <h4 style="margin-top:10px; margin-bottom:4px;">Certeza: {item['primaryConfidence']*100:.1f}%</h4>
-                <p style="font-size:12px; color:{text_sub};">{item.get('recommendation','')}</p>
-            </div>
-            """)
+        render_html(f"""
+        <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:12px;">
+            <span style="background-color:{d_meta['color']}; color:white; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:12px;">{d_meta['name']}</span>
+            <span style="float:right; font-size:11px; color:gray;">{item['timestamp']}</span>
+            <h4 style="margin-top:10px; margin-bottom:4px;">Certeza: {item['primaryConfidence']*100:.1f}%</h4>
+            <p style="font-size:12px; color:{text_sub};">{item.get('recommendation','')}</p>
+        </div>
+        """)
 
 # ----------------------------------------------------
 # TAB: GUIAS TECNICAS
