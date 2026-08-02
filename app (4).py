@@ -48,6 +48,8 @@ def render_html(html_content: str):
 # ----------------------------------------------------
 # COMPONENTE DE CAMARA PERSONALIZADO (TRASERA / FRONTAL)
 # ----------------------------------------------------
+
+_CAMERA_COMPONENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_component")
 st.write("🔍 Ruta calculada:", _CAMERA_COMPONENT_DIR)
 st.write("🔍 ¿Existe carpeta?:", os.path.exists(_CAMERA_COMPONENT_DIR))
 if os.path.exists(_CAMERA_COMPONENT_DIR):
@@ -56,7 +58,6 @@ if os.path.exists(_CAMERA_COMPONENT_DIR):
     st.write("🔍 ¿Existe index.html?:", os.path.exists(idx_path))
     if os.path.exists(idx_path):
         st.write("🔍 Tamaño index.html (bytes):", os.path.getsize(idx_path))
-_CAMERA_COMPONENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_component")
 _camera_capture_component = components.declare_component("camera_capture", path=_CAMERA_COMPONENT_DIR)
 
 
