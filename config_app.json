@@ -1,0 +1,48 @@
+{
+  "arquitectura_seleccionada": "MobileNetV2",
+  "clases": [
+    "sana",
+    "roya",
+    "cercospora",
+    "phoma",
+    "arana_roja",
+    "minador"
+  ],
+  "img_size": [
+    224,
+    224
+  ],
+  "umbral_decision": 0.6,
+  "metricas_test": {
+    "accuracy": 0.9009661674499512,
+    "precision": 0.9123711585998535,
+    "recall": 0.8550724387168884
+  },
+  "comparacion_arquitecturas": [
+    {
+      "Arquitectura": "MobileNetV2",
+      "Exactitud (test)": 0.9009661674499512,
+      "Precision (test)": 0.9123711585998535,
+      "Sensibilidad (test)": 0.8550724387168884,
+      "F1-score (test)": 0.882793015111672,
+      "Parametros (millones)": 2.42,
+      "Tiempo entrenamiento (min)": 20.4,
+      "F1_norm": 1.0,
+      "Tamano_norm": 1.0,
+      "Puntaje_despliegue": 1.0
+    },
+    {
+      "Arquitectura": "EfficientNetB0",
+      "Exactitud (test)": 0.8526570200920105,
+      "Precision (test)": 0.8961748480796814,
+      "Sensibilidad (test)": 0.7922705411911011,
+      "F1-score (test)": 0.8410256393025236,
+      "Parametros (millones)": 4.21,
+      "Tiempo entrenamiento (min)": 28.4,
+      "F1_norm": 0.9526872380114325,
+      "Tamano_norm": 0.5748218527315915,
+      "Puntaje_despliegue": 0.8393276224274802
+    }
+  ],
+  "fecha_entrenamiento": "2026-08-02T04:38:20.479439"
+}
