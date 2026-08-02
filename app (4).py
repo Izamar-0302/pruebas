@@ -102,9 +102,42 @@ def interpretar_prediccion(probs, clases, umbral):
 
 
 def parsear_recomendacion_estructurada(texto):
-    """Convierte texto con secciones ## 01. Titulo en lista de dicts."""
+    """Convierte texto con secciones ## 01. Titulo en lista de dicts.
+    Tambien limpia bloques de codigo Markdown que Groq a veces envuelve."""
+
+    # 1. Limpiar bloques de codigo Markdown que Groq a veces envuelve
+    texto = re.sub(r'```html\s*', '', texto, flags=re.IGNORECASE)
+    texto = re.sub(r'```\s*', '', texto)
+    texto = texto.strip()
+
+    # 2. Si el texto ya es HTML con rec-section, extraer datos del HTML
+    if '<div class="rec-section"' in texto or "<div class='rec-section'" in texto:
+        secciones = []
+        # Extraer cada rec-section
+        section_pattern = r'<div class=["\']rec-section["\'][^>]*>(.*?)</div>\s*</div>\s*</div>'
+        # Patron mas flexible
+        section_blocks = re.findall(r'<div class=["\']rec-section["\'][^>]*>(.*?)</div>\s*</div>\s*</div>', texto, re.DOTALL)
+        if not section_blocks:
+            # Intentar con pattern mas simple
+            section_blocks = re.findall(r'<div class=["\']rec-section["\'][^>]*>(.*?)</div>\s*</div>', texto, re.DOTALL)
+
+        for block in section_blocks:
+            num_match = re.search(r'<div class=["\']rec-num["\'][^>]*>(\d+)</div>', block)
+            title_match = re.search(r'<div class=["\']rec-title["\'][^>]*>(.*?)</div>', block)
+            text_match = re.search(r'<p class=["\']rec-text["\'][^>]*>(.*?)</p>', block)
+
+            if num_match and title_match:
+                secciones.append({
+                    "num": num_match.group(1).zfill(2),
+                    "titulo": re.sub(r'<[^>]+>', '', title_match.group(1)).strip(),
+                    "texto": re.sub(r'<[^>]+>', '', text_match.group(1)).strip() if text_match else ""
+                })
+
+        if secciones:
+            return secciones
+
+    # 3. Parsear formato Markdown ## 01. Titulo
     secciones = []
-    # Busca patrones como ## 01. Titulo o ## 1. Titulo o 01. Titulo
     patron = r'(?:##\s*)?(\d{1,2})[\.\)]\s*(.+?)(?=\n(?:##\s*)?\d{1,2}[\.\)]|\Z)'
     matches = list(re.finditer(patron, texto, re.DOTALL))
 
@@ -146,14 +179,14 @@ def obtener_recomendacion(clase, clase_secundaria=None):
         f"Un productor de Comayagua, Honduras, tiene un diagnostico de: {nombre_enfermedad} ({categoria}). "
         "Genera una recomendacion TECNICA, DETALLADA y ESTRUCTURADA en EXACTAMENTE 5 secciones numeradas del 01 al 05. "
         "Cada seccion debe tener un titulo claro y un parrafo explicativo de 3-5 oraciones. "
-        "Usa este formato obligatorio:\n\n"
+        "Usa este formato obligatorio (texto plano, NO uses bloques de codigo ni HTML):\n\n"
         "## 01. Diferenciacion a simple vista\n[Descripcion detallada de como identificar visualmente la enfermedad/plaga y diferenciarla de otras similares]\n\n"
         "## 02. Manejo agronomico preventivo y correctivo\n[Acciones concretas: poda, fertilizacion, drenaje, sombra, fungicidas/acaricidas autorizados, dosis si aplica]\n\n"
         "## 03. Consulta a un tecnico IHCAFE\n[Por que es importante confirmar con un tecnico, que muestras llevar, cuando acudir urgentemente]\n\n"
         "## 04. Monitoreo y seguimiento\n[Frecuencia de inspeccion, indicadores de mejora o empeora, ajustes segun estacion]\n\n"
         "## 05. Registro y trazabilidad\n[Como llevar bitacora de observaciones, tratamientos aplicados, fechas, resultados para futuras campanas]\n\n"
         f"{prompt_extra}\n\n"
-        "Responde UNICAMENTE con las 5 secciones en el formato indicado. No agregues introduccion ni conclusion."
+        "Responde UNICAMENTE con las 5 secciones en el formato indicado. No agregues introduccion ni conclusion. NO uses markdown de codigo (```)."
     )
 
     try:
@@ -374,7 +407,7 @@ RECOMENDACIONES_ESTRUCTURADAS = {
         {"num": "02", "titulo": "Manejo agronomico preventivo y correctivo", "texto": "Mantener fertilizacion balanceada N-P-K segun analisis de suelo y foliar. Aplicar cal dolomitica si pH <5.5 para mejorar absorcion de Ca y Mg. Realizar poda de mantenimiento anual. Mantener sombra al 30-40% para proteger de estres termico sin generar exceso de humedad. Aplicar fungicidas preventivos antes de epocas de lluvia intensa si hay historial de roya en la zona."},
         {"num": "03", "titulo": "Consulta a un tecnico IHCAFE", "texto": "Programar visita tecnica semestral para analisis foliar completo (N, P, K, Ca, Mg, S, B, Zn, Mn, Fe) y evaluacion del sistema de sombra. El tecnico identificara deficiencias ocultas que predisponen al ataque futuro. Aproveche la visita para actualizar su calendario fitosanitario segun pronostico climatico."},
         {"num": "04", "titulo": "Monitoreo y seguimiento", "texto": "Realice inspecciones fitosanitarias quincenales durante la epoca de crecimiento activo (lluvias). Evalue 30 plantas distribuidas al azar. Parametros de salud: brotes con 2-3 pares de hojas sanas, ausencia de clorosis, firmeza foliar al tacto. Detecte a tiempo cualquier cambio: mancha, pustula o deformacion."},
-        {"num": "05", "titulo": "Registro y trazabilidad", "texto": "Documente resultados de analisis de suelo/foliar, programa de fertilizacion, podas realizadas, control de malezas y monitoreos fitosanitarios. Mantenga historial fotografico de la evolucion del follaje. Esta documentacion es esencial para certificaciones de origen, trazabilidad de compradores y acceso a programas de IHCAFE de cafés de especialidad."}
+        {"num": "05", "titulo": "Registro y trazabilidad", "texto": "Documente resultados de analisis de suelo/foliar, programa de fertilizacion, podas realizadas, control de malezas y monitoreos fitosanitarios. Mantenga historial fotografico de la evolucion del follaje. Esta documentacion es esencial para certificaciones de origen, trazabilidad de compradores y acceso a programas de IHCAFE de cafes de especialidad."}
     ]
 }
 
