@@ -50,6 +50,43 @@ def render_html(html_content: str):
     st.markdown(html_content, unsafe_allow_html=True)
 
 
+def construir_recomendacion_html(rec_data, text_sub_color):
+    """
+    Construye el HTML del bloque de recomendacion (numerado, con titulos y texto)
+    a partir de la lista estructurada, o de un texto plano de respaldo.
+    Reutilizado tanto en el panel de Diagnostico como en el Historial.
+    """
+    if isinstance(rec_data, list) and len(rec_data) > 0:
+        html = f"""
+        <div class="rec-container">
+            <div class="rec-header">
+                <span class="rec-header-icon">💡</span>
+                <span class="rec-header-label">ORIENTACION Y MANEJO PREVENTIVO</span>
+            </div>
+            <p style="font-size:12px; color:{text_sub_color}; margin-bottom:12px;">
+                Aqui tienes una recomendacion tecnica detallada para manejar la situacion:
+            </p>
+        """
+        for sec in rec_data:
+            html += f"""
+            <div class="rec-section">
+                <div class="rec-num">{sec.get('num', '01')}</div>
+                <div>
+                    <div class="rec-title">{sec.get('titulo', '')}</div>
+                    <p class="rec-text">{sec.get('texto', '')}</p>
+                </div>
+            </div>
+            """
+        html += "</div>"
+        return html
+    txt = rec_data if isinstance(rec_data, str) and rec_data else "Sin recomendacion disponible."
+    return f"""
+    <div class="rec-container">
+        <p style="font-size:13px; line-height:1.6; margin:0; white-space: pre-line;">{txt}</p>
+    </div>
+    """
+
+
 # ----------------------------------------------------
 # CAPTURA DE FOTO CON WIDGET NATIVO DE STREAMLIT
 # ----------------------------------------------------
@@ -807,36 +844,7 @@ if tab_choice == "DIAGNOSTICO":
                 st.warning(cd["coinfeccion"])
 
             rec_data = cd.get("recommendation", [])
-            if isinstance(rec_data, list) and len(rec_data) > 0:
-                html = f"""
-                <div class="rec-container">
-                    <div class="rec-header">
-                        <span class="rec-header-icon">💡</span>
-                        <span class="rec-header-label">ORIENTACION Y MANEJO PREVENTIVO</span>
-                    </div>
-                    <p style="font-size:12px; color:{text_sub}; margin-bottom:12px;">
-                        Aqui tienes una recomendacion tecnica detallada para manejar la situacion:
-                    </p>
-                """
-                for sec in rec_data:
-                    html += f"""
-                    <div class="rec-section">
-                        <div class="rec-num">{sec.get('num','01')}</div>
-                        <div>
-                            <div class="rec-title">{sec.get('titulo','')}</div>
-                            <p class="rec-text">{sec.get('texto','')}</p>
-                        </div>
-                    </div>
-                    """
-                html += "</div>"
-                render_html(html)
-            else:
-                txt = rec_data if isinstance(rec_data, str) else "Sin recomendacion."
-                render_html(f"""
-                <div class="rec-container">
-                    <p style="font-size:13px; line-height:1.6; margin:0; white-space: pre-line;">{txt}</p>
-                </div>
-                """)
+            render_html(construir_recomendacion_html(rec_data, text_sub))
 
             render_html("""
             <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; margin-bottom:12px;">
@@ -876,14 +884,29 @@ elif tab_choice == "HISTORIAL":
         )
     for item in st.session_state.history:
         d_meta = COFFEE_DISEASES[item["primaryDisease"]]
-        render_html(f"""
-        <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:12px;">
-            <span style="background-color:{d_meta['color']}; color:white; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:12px;">{d_meta['name']}</span>
-            <span style="float:right; font-size:11px; color:gray;">{item['timestamp']}</span>
-            <h4 style="margin-top:10px; margin-bottom:4px;">Certeza: {item['primaryConfidence']*100:.1f}%</h4>
-            <p style="font-size:12px; color:{text_sub};">{item.get('recommendation','')}</p>
-        </div>
-        """)
+        col_h_img, col_h_body = st.columns([1, 3], gap="medium")
+        with col_h_img:
+            if item.get("image_path") and os.path.exists(item["image_path"]):
+                st.image(item["image_path"], use_container_width=True)
+            else:
+                render_html(f"""
+                <div style="width:100%; aspect-ratio:1/1; background-color:{highlight_bg}; border:1px solid {border_color};
+                            border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:26px;">
+                    🍃
+                </div>
+                """)
+        with col_h_body:
+            render_html(f"""
+            <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:8px;">
+                <span style="background-color:{d_meta['color']}; color:white; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:12px;">{d_meta['name']}</span>
+                <span style="float:right; font-size:11px; color:gray;">{item['timestamp']}</span>
+                <h4 style="margin-top:10px; margin-bottom:2px;">Certeza: {item['primaryConfidence']*100:.1f}%</h4>
+                <p style="font-size:11px; color:{text_sub}; margin:0;">{d_meta.get('scientificName', '')}</p>
+            </div>
+            """)
+            with st.expander("Ver recomendacion completa"):
+                render_html(construir_recomendacion_html(item.get("recommendation", []), text_sub))
+        render_html("<div style='margin-bottom:14px;'></div>")
 
 # ----------------------------------------------------
 # TAB: GUIAS TECNICAS
