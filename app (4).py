@@ -1,10 +1,13 @@
 import streamlit as st
+import streamlit.components.v1 as components
+import base64
 import json
 import os
 import re
 import shutil
 import tempfile
 from datetime import datetime
+from io import BytesIO
 
 import numpy as np
 import requests
@@ -40,6 +43,36 @@ def render_html(html_content: str):
     """
     html_content = "\n".join(line.strip() for line in html_content.split("\n"))
     st.markdown(html_content, unsafe_allow_html=True)
+
+
+# ----------------------------------------------------
+# COMPONENTE DE CAMARA PERSONALIZADO (TRASERA / FRONTAL)
+# ----------------------------------------------------
+_CAMERA_COMPONENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_component")
+_camera_capture_component = components.declare_component("camera_capture", path=_CAMERA_COMPONENT_DIR)
+
+
+def capturar_foto_camara(key="camara_agrodetect"):
+    """
+    Muestra el widget de camara (con selector de camara trasera/frontal) y
+    devuelve una PIL.Image si el usuario capturo una foto, o None si aun no
+    ha capturado nada o hubo un error de permisos de camara.
+    """
+    resultado = _camera_capture_component(key=key, default=None)
+    if resultado and isinstance(resultado, dict):
+        if resultado.get("error"):
+            st.warning(f"⚠️ No se pudo acceder a la camara: {resultado['error']}")
+            return None
+        data_url = resultado.get("image")
+        if data_url:
+            try:
+                _, encoded = data_url.split(",", 1)
+                img_bytes = base64.b64decode(encoded)
+                return Image.open(BytesIO(img_bytes))
+            except Exception:
+                st.warning("⚠️ No se pudo procesar la foto capturada. Intenta de nuevo.")
+                return None
+    return None
 
 
 # ----------------------------------------------------
@@ -547,10 +580,22 @@ if tab_choice == "DIAGNOSTICO":
         </p>
         """)
 
-        uploaded_img = st.file_uploader("Sube la imagen foliar (.jpg, .png):", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
+        metodo_captura = st.radio(
+            "Metodo de captura:",
+            ["📁 Subir archivo", "📷 Usar camara"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
 
-        if uploaded_img is not None:
-            image = Image.open(uploaded_img)
+        image = None
+        if metodo_captura == "📁 Subir archivo":
+            uploaded_img = st.file_uploader("Sube la imagen foliar (.jpg, .png):", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
+            if uploaded_img is not None:
+                image = Image.open(uploaded_img)
+        else:
+            image = capturar_foto_camara()
+
+        if image is not None:
             st.image(image, use_container_width=True)
             if st.button("🚀 DIAGNOSTICAR AHORA", type="primary", use_container_width=True):
                 with st.spinner("Analizando pigmentacion necrotica foliar..."):
