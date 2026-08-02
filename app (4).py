@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime
@@ -22,6 +23,24 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+
+# ----------------------------------------------------
+# HELPER: RENDER HTML SEGURO (FIX BUG DE INDENTACION)
+# ----------------------------------------------------
+def render_html(html_content: str):
+    """
+    Renderiza HTML con st.markdown de forma segura.
+
+    Streamlit/Markdown interpreta cualquier linea indentada 4+ espacios
+    como un bloque de codigo, lo cual hace que el HTML se muestre como
+    texto plano (las etiquetas <div>, <span>, etc. aparecen literalmente
+    en pantalla) en vez de renderizarse. Esta funcion quita la indentacion
+    de cada linea antes de pasarla a st.markdown para evitar ese problema.
+    """
+    html_content = "\n".join(line.strip() for line in html_content.split("\n"))
+    st.markdown(html_content, unsafe_allow_html=True)
+
 
 # ----------------------------------------------------
 # CONFIGURACION GITHUB
@@ -94,18 +113,118 @@ def interpretar_prediccion(probs, clases, umbral):
     }
 
 
+def limpiar_respuesta_groq(texto):
+    """Limpia bloques de codigo markdown y extrae JSON o texto plano."""
+    # Quitar bloques ```json ... ``` o ```html ... ``` o ``` ... ```
+    texto = re.sub(r'```(?:json|html)?\s*', '', texto, flags=re.IGNORECASE)
+    texto = re.sub(r'\s*```', '', texto)
+    texto = texto.strip()
+    return texto
+
+
+def parsear_recomendacion(texto):
+    """Intenta parsear JSON, luego markdown ## 01, luego HTML. Si todo falla, devuelve None."""
+    texto_limpio = limpiar_respuesta_groq(texto)
+
+    # 1. Intentar JSON
+    try:
+        data = json.loads(texto_limpio)
+        if isinstance(data, list) and len(data) >= 3:
+            secciones = []
+            for item in data:
+                secciones.append({
+                    "num": str(item.get("num", "01")).zfill(2),
+                    "titulo": item.get("titulo", item.get("title", "")),
+                    "texto": item.get("texto", item.get("text", item.get("contenido", "")))
+                })
+            return secciones
+    except Exception:
+        pass
+
+    # 2. Intentar HTML con rec-section
+    if '<div class="rec-section"' in texto_limpio or "<div class='rec-section'" in texto_limpio:
+        secciones = []
+        # Extraer bloques rec-section de forma robusta
+        pattern = r'<div\s+class=["\']rec-section["\']\s*>(.*?)</div>\s*</div>\s*</div>'
+        blocks = re.findall(pattern, texto_limpio, re.DOTALL)
+        if not blocks:
+            pattern2 = r'<div\s+class=["\']rec-section["\']\s*>(.*?)</div>\s*</div>'
+            blocks = re.findall(pattern2, texto_limpio, re.DOTALL)
+        for block in blocks:
+            num_m = re.search(r'<div\s+class=["\']rec-num["\'][^>]*>(\d+)</div>', block)
+            title_m = re.search(r'<div\s+class=["\']rec-title["\'][^>]*>(.*?)</div>', block)
+            text_m = re.search(r'<p\s+class=["\']rec-text["\'][^>]*>(.*?)</p>', block)
+            if num_m and title_m:
+                secciones.append({
+                    "num": num_m.group(1).zfill(2),
+                    "titulo": re.sub(r'<[^>]+>', '', title_m.group(1)).strip(),
+                    "texto": re.sub(r'<[^>]+>', '', text_m.group(1)).strip() if text_m else ""
+                })
+        if secciones:
+            return secciones
+
+    # 3. Intentar Markdown ## 01. Titulo
+    secciones = []
+    patron = r'(?:##\s*)?(\d{1,2})[\.\)]\s*(.+?)(?=\n(?:##\s*)?\d{1,2}[\.\)]|\Z)'
+    matches = list(re.finditer(patron, texto_limpio, re.DOTALL))
+    for m in matches:
+        num = m.group(1).zfill(2)
+        lines = m.group(2).strip().split('\n')
+        titulo = lines[0].strip()
+        texto_sec = '\n'.join(lines[1:]).strip()
+        secciones.append({"num": num, "titulo": titulo, "texto": texto_sec})
+    if len(secciones) >= 3:
+        return secciones
+
+    return None
+
+
 def obtener_recomendacion(clase, clase_secundaria=None):
-    """Devuelve recomendacion estructurada curada profesionalmente.
-    Groq fue removido porque no respeta formatos estructurados consistentemente."""
-    base = RECOMENDACIONES_ESTRUCTURADAS.get(clase, RECOMENDACIONES_ESTRUCTURADAS["sana"])
+    """Genera recomendacion estructurada con Groq (JSON); si falla, usa respaldo."""
+    api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
+    respaldo = RECOMENDACIONES_ESTRUCTURADAS.get(clase, RECOMENDACIONES_ESTRUCTURADAS["sana"])
+
+    if not api_key:
+        return respaldo
+
+    nombre = COFFEE_DISEASES[clase]["name"]
+    categoria = COFFEE_DISEASES[clase]["category"]
+
+    extra = ""
     if clase_secundaria:
-        extra = {
-            "num": "06",
-            "titulo": f"Nota: Posible coinfeccion con {COFFEE_DISEASES[clase_secundaria]['name']}",
-            "texto": f"El sistema detecto signos secundarios de {COFFEE_DISEASES[clase_secundaria]['name']}. Se recomienda inspeccion visual adicional en el enves de las hojas y consulta con tecnico IHCAFE para confirmar diagnostico diferencial antes de aplicar tratamientos."
-        }
-        return base + [extra]
-    return base
+        extra = f" NOTA: tambien detecto signos de {COFFEE_DISEASES[clase_secundaria]['name']}. Incluye breve diferenciacion."
+
+    prompt = (
+        "Eres agronomo senior IHCAFE. Diagnostico: " + nombre + " (" + categoria + "). "
+        "Responde UNICAMENTE con un array JSON valido de 5 objetos. "
+        "NO uses markdown, NO uses HTML, NO uses bloques de codigo. Solo JSON puro.\n\n"
+        "Formato exacto:\n"
+        '[{"num":"01","titulo":"Diferenciacion a simple vista","texto":"3-5 oraciones..."},'
+        '{"num":"02","titulo":"Manejo agronomico preventivo y correctivo","texto":"..."},'
+        '{"num":"03","titulo":"Consulta a un tecnico IHCAFE","texto":"..."},'
+        '{"num":"04","titulo":"Monitoreo y seguimiento","texto":"..."},'
+        '{"num":"05","titulo":"Registro y trazabilidad","texto":"..."}]\n\n'
+        "Cada 'texto' debe tener 3-5 oraciones tecnicas y detalladas."
+        + extra
+    )
+
+    try:
+        from groq import Groq
+        cliente = Groq(api_key=api_key)
+        resp = cliente.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=1200,
+        )
+        texto = resp.choices[0].message.content.strip()
+        parsed = parsear_recomendacion(texto)
+        if parsed and len(parsed) >= 3:
+            return parsed
+        return respaldo
+    except Exception as e:
+        st.warning(f"Groq no disponible ({e}). Usando recomendacion curada.")
+        return respaldo
 
 
 # ============================================================
@@ -290,7 +409,7 @@ def guardar_historial():
 
 
 # ----------------------------------------------------
-# SESSION STATE + LIMPIEZA DE HISTORIAL VIEJO
+# SESSION STATE
 # ----------------------------------------------------
 if "theme" not in st.session_state:
     st.session_state.theme = "claro"
@@ -307,40 +426,6 @@ if "history" not in st.session_state:
         st.session_state.history = []
 if "current_diag" not in st.session_state:
     st.session_state.current_diag = st.session_state.history[0] if st.session_state.history else None
-
-# LIMPIAR historial viejo: si recommendation es string o contiene HTML, reemplazar por respaldo curado
-for item in st.session_state.history:
-    rec = item.get("recommendation", [])
-    clase = item.get("primaryDisease", "sana")
-    es_malo = False
-    if isinstance(rec, str):
-        es_malo = True
-    elif isinstance(rec, list) and len(rec) > 0:
-        if isinstance(rec[0], str):
-            es_malo = True
-        elif isinstance(rec[0], dict):
-            # Verificar si el dict contiene HTML en sus valores
-            txt = str(rec[0].get("texto", "")) + str(rec[0].get("titulo", ""))
-            if "<div" in txt or "<p" in txt or "class=" in txt:
-                es_malo = True
-    if es_malo:
-        item["recommendation"] = RECOMENDACIONES_ESTRUCTURADAS.get(clase, RECOMENDACIONES_ESTRUCTURADAS["sana"])
-
-if st.session_state.current_diag:
-    rec = st.session_state.current_diag.get("recommendation", [])
-    clase = st.session_state.current_diag.get("primaryDisease", "sana")
-    es_malo = False
-    if isinstance(rec, str):
-        es_malo = True
-    elif isinstance(rec, list) and len(rec) > 0:
-        if isinstance(rec[0], str):
-            es_malo = True
-        elif isinstance(rec[0], dict):
-            txt = str(rec[0].get("texto", "")) + str(rec[0].get("titulo", ""))
-            if "<div" in txt or "<p" in txt or "class=" in txt:
-                es_malo = True
-    if es_malo:
-        st.session_state.current_diag["recommendation"] = RECOMENDACIONES_ESTRUCTURADAS.get(clase, RECOMENDACIONES_ESTRUCTURADAS["sana"])
 
 modelo = cargar_modelo()
 CLASES, IMG_SIZE, UMBRAL = cargar_config()
@@ -433,7 +518,7 @@ st.markdown(f"""
 # ----------------------------------------------------
 col_nav1, col_nav2, col_nav3 = st.columns([2, 3, 2])
 with col_nav1:
-    st.markdown(f'<div style="display:flex; align-items:baseline;"><span class="brand-title">AgroDetect</span><span class="brand-version">v2.0</span></div>', unsafe_allow_html=True)
+    render_html(f'<div style="display:flex; align-items:baseline;"><span class="brand-title">AgroDetect</span><span class="brand-version">v2.0</span></div>')
 with col_nav2:
     tab_choice = st.radio("", ["DIAGNOSTICO", "HISTORIAL", "GUIAS TECNICAS", "GITHUB"], horizontal=True, label_visibility="collapsed")
 with col_nav3:
@@ -446,7 +531,7 @@ with col_nav3:
         if st.button(lbl, use_container_width=True):
             st.session_state.theme = "claro" if is_dark else "oscuro"
             st.rerun()
-st.markdown("<hr style='margin-top:0; margin-bottom:24px; border-color:" + border_color + ";'>", unsafe_allow_html=True)
+render_html("<hr style='margin-top:0; margin-bottom:24px; border-color:" + border_color + ";'>")
 
 # ----------------------------------------------------
 # TAB: DIAGNOSTICO
@@ -455,12 +540,12 @@ if tab_choice == "DIAGNOSTICO":
     col_left, col_right = st.columns([1, 1], gap="large")
 
     with col_left:
-        st.markdown(f"""
+        render_html(f"""
         <h2 style="font-family: 'Playfair Display', serif; margin-bottom: 4px;">Captura de Imagen Foliar</h2>
         <p style="font-size: 13px; color: {text_sub}; margin-bottom: 24px;">
             Posicione la hoja de cafe bajo luz natural. El sistema detectara automaticamente signos de Roya, Cercospora o Plagas.
         </p>
-        """, unsafe_allow_html=True)
+        """)
 
         uploaded_img = st.file_uploader("Sube la imagen foliar (.jpg, .png):", type=["jpg", "png", "jpeg"], label_visibility="collapsed")
 
@@ -499,8 +584,8 @@ if tab_choice == "DIAGNOSTICO":
                         guardar_historial()
                         st.success("¡Diagnostico completado con exito!")
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("<p style='font-size:10px; font-weight:bold; letter-spacing:1px; color:#8C7D73;'>RETROALIMENTACION:</p>", unsafe_allow_html=True)
+        render_html("<br>")
+        render_html("<p style='font-size:10px; font-weight:bold; letter-spacing:1px; color:#8C7D73;'>RETROALIMENTACION:</p>")
         q_comment = st.text_input("Comentario:", placeholder="Escriba su comentario para mejora del modelo...", label_visibility="collapsed")
         if st.button("ENVIAR RETROALIMENTACION"):
             if q_comment:
@@ -516,43 +601,43 @@ if tab_choice == "DIAGNOSTICO":
     with col_right:
         cd = st.session_state.current_diag
         if cd is None:
-            st.markdown(f"""
+            render_html(f"""
             <div class="rec-container" style="text-align:center;">
                 <p style="font-size:13px; color:{text_sub}; margin:0;">
                     Aun no se ha realizado ningun diagnostico. Sube una fotografia y presiona <strong>DIAGNOSTICAR AHORA</strong>.
                 </p>
             </div>
-            """, unsafe_allow_html=True)
+            """)
         else:
             d_info = COFFEE_DISEASES[cd["primaryDisease"]]
             conf_p = f"{cd['primaryConfidence']*100:.1f}%"
 
-            st.markdown(f"""
+            render_html(f"""
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <span style="font-size:10px; font-weight:bold; letter-spacing:1px; color:#8C7D73;">ULTIMO DIAGNOSTICO</span>
                 <span style="font-size:11px; font-family:monospace; color:#9CA3AF;">{cd['timestamp']}</span>
             </div>
-            """, unsafe_allow_html=True)
+            """)
 
             ct, cp = st.columns([2, 1])
             with ct:
-                st.markdown(f"""
+                render_html(f"""
                 <h1 style="font-family: 'Playfair Display', serif; margin:0; font-size: 32px;">{d_info['name']}</h1>
                 <p style="font-size: 12px; font-style: italic; color: #8C7D73; margin-top: 4px;">{d_info.get('scientificName', 'Coffea arabica')} • Detectado recientemente</p>
-                """, unsafe_allow_html=True)
+                """)
             with cp:
-                st.markdown(f"""
+                render_html(f"""
                 <div style="text-align: right;">
                     <span style="font-family: 'Playfair Display', serif; font-size: 36px; font-weight: bold;">{conf_p}</span>
                     <p style="font-size: 10px; font-weight: bold; color: #9CA3AF; text-transform: uppercase;">CONFIANZA IA</p>
                 </div>
-                """, unsafe_allow_html=True)
+                """)
 
             if cd.get("coinfeccion"):
                 st.warning(cd["coinfeccion"])
 
             rec_data = cd.get("recommendation", [])
-            if isinstance(rec_data, list) and len(rec_data) > 0 and isinstance(rec_data[0], dict):
+            if isinstance(rec_data, list) and len(rec_data) > 0:
                 html = f"""
                 <div class="rec-container">
                     <div class="rec-header">
@@ -574,24 +659,24 @@ if tab_choice == "DIAGNOSTICO":
                     </div>
                     """
                 html += "</div>"
-                st.markdown(html, unsafe_allow_html=True)
+                render_html(html)
             else:
-                txt = str(rec_data) if rec_data else "Sin recomendacion disponible."
-                st.markdown(f"""
+                txt = rec_data if isinstance(rec_data, str) else "Sin recomendacion."
+                render_html(f"""
                 <div class="rec-container">
                     <p style="font-size:13px; line-height:1.6; margin:0; white-space: pre-line;">{txt}</p>
                 </div>
-                """, unsafe_allow_html=True)
+                """)
 
-            st.markdown("""
+            render_html("""
             <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; margin-bottom:12px;">
                 <span style="font-size:10px; font-weight:bold; letter-spacing:1px; color:#8C7D73;">HISTORIAL RECIENTE</span>
             </div>
-            """, unsafe_allow_html=True)
+            """)
 
             for item in st.session_state.history[:3]:
                 item_d = COFFEE_DISEASES[item["primaryDisease"]]
-                st.markdown(f"""
+                render_html(f"""
                 <div style="display:flex; justify-content:space-between; align-items:center; padding: 12px 16px; background-color:{card_bg}; border: 1px solid {border_color}; border-radius:14px; margin-bottom:8px;">
                     <div style="display:flex; align-items:center; gap:10px;">
                         <span style="width:10px; height:10px; border-radius:50%; background-color:{item_d['color']}; display:inline-block;"></span>
@@ -599,9 +684,9 @@ if tab_choice == "DIAGNOSTICO":
                     </div>
                     <span style="font-size:11px; font-family:monospace; color:#9CA3AF;">{item['timestamp']}</span>
                 </div>
-                """, unsafe_allow_html=True)
+                """)
 
-            st.markdown("<hr style='border-color:" + border_color + "; margin-top:24px;'>", unsafe_allow_html=True)
+            render_html("<hr style='border-color:" + border_color + "; margin-top:24px;'>")
             st.caption("© 2026 AGRODETECT • SOPORTE IHCAFE")
 
 # ----------------------------------------------------
@@ -613,20 +698,14 @@ elif tab_choice == "HISTORIAL":
         st.info("Aun no hay diagnosticos registrados.")
     for item in st.session_state.history:
         d_meta = COFFEE_DISEASES[item["primaryDisease"]]
-        rec = item.get("recommendation", [])
-        rec_text = ""
-        if isinstance(rec, list) and len(rec) > 0 and isinstance(rec[0], dict):
-            rec_text = "<br>".join([f"<b>{s['num']}. {s['titulo']}</b>: {s['texto']}" for s in rec])
-        else:
-            rec_text = str(rec)
-        st.markdown(f"""
+        render_html(f"""
         <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:12px;">
             <span style="background-color:{d_meta['color']}; color:white; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:12px;">{d_meta['name']}</span>
             <span style="float:right; font-size:11px; color:gray;">{item['timestamp']}</span>
             <h4 style="margin-top:10px; margin-bottom:4px;">Certeza: {item['primaryConfidence']*100:.1f}%</h4>
-            <p style="font-size:12px; color:{text_sub};">{rec_text}</p>
+            <p style="font-size:12px; color:{text_sub};">{item.get('recommendation','')}</p>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
 # ----------------------------------------------------
 # TAB: GUIAS TECNICAS
@@ -660,7 +739,7 @@ elif tab_choice == "GITHUB":
     else:
         for fb in feedback_list:
             icon = "🟢" if fb['estado'] == 'open' else "🔴"
-            st.markdown(f"""
+            render_html(f"""
             <div style="padding:14px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:14px; margin-bottom:10px;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span style="font-size:11px; color:#9CA3AF; font-family:monospace;">{fb['fecha']} {icon}</span>
@@ -669,4 +748,4 @@ elif tab_choice == "GITHUB":
                 <p style="font-size:13px; margin:6px 0 0 0;"><strong>{fb['comentario']}</strong></p>
                 <p style="font-size:11px; color:{text_sub}; margin:2px 0 0 0;">Diagnostico: {fb['diagnostico_relacionado']}</p>
             </div>
-            """, unsafe_allow_html=True)
+            """)
