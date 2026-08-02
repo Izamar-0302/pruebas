@@ -386,11 +386,11 @@ def obtener_recomendacion(clase, clase_secundaria=None):
 
 
 # ============================================================
-# GITHUB ISSUES API
+# ALMACENAMIENTO DE COMENTARIOS (backend: GitHub Issues, uso interno)
 # ============================================================
 def enviar_feedback_github(comentario, diagnostico_relacionado=None):
     if not GITHUB_TOKEN or not GITHUB_REPO:
-        return False, "GITHUB_TOKEN o GITHUB_REPO no configurados."
+        return False, "El servicio de comentarios no esta configurado."
     url = f"https://api.github.com/repos/{GITHUB_REPO}/issues"
     headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     title = f"[Feedback] {comentario[:50]}{'...' if len(comentario) > 50 else ''}"
@@ -423,7 +423,6 @@ def obtener_feedback_github():
                 "comentario": issue.get("title", "").replace("[Feedback] ", ""),
                 "diagnostico_relacionado": diag,
                 "fecha": datetime.strptime(issue["created_at"], "%Y-%m-%dT%H:%M:%SZ").strftime("%d/%m/%Y %H:%M"),
-                "url": issue.get("html_url", ""),
                 "estado": issue.get("state", "open")
             })
         return items
@@ -700,7 +699,7 @@ col_nav1, col_nav2, col_nav3 = st.columns([2, 3, 2])
 with col_nav1:
     render_html(f'<div style="display:flex; align-items:baseline;"><span class="brand-title">Agr{BEAN_ICON}Detect</span><span class="brand-version">v2.0</span></div>')
 with col_nav2:
-    tab_choice = st.radio("", ["DIAGNOSTICO", "HISTORIAL", "GUIAS TECNICAS", "GITHUB"], horizontal=True, label_visibility="collapsed")
+    tab_choice = st.radio("", ["DIAGNOSTICO", "GUIAS TECNICAS", "COMENTARIOS"], horizontal=True, label_visibility="collapsed")
 with col_nav3:
     c1, c2 = st.columns([2, 1])
     with c1:
@@ -799,9 +798,9 @@ if tab_choice == "DIAGNOSTICO":
                 diag_rel = st.session_state.current_diag["primaryDisease"] if st.session_state.current_diag else None
                 ok, msg = enviar_feedback_github(q_comment, diag_rel)
                 if ok:
-                    st.toast("Comentario registrado en GitHub Issues.", icon="✅")
+                    st.toast("Comentario registrado.", icon="✅")
                 else:
-                    st.warning(f"No se pudo enviar a GitHub: {msg}")
+                    st.warning(f"No se pudo enviar el comentario: {msg}")
             else:
                 st.warning("Escribe un comentario antes de enviar.")
 
@@ -868,47 +867,6 @@ if tab_choice == "DIAGNOSTICO":
             st.caption("© 2026 AGRODETECT • SOPORTE IHCAFE")
 
 # ----------------------------------------------------
-# TAB: HISTORIAL
-# ----------------------------------------------------
-elif tab_choice == "HISTORIAL":
-    st.subheader("📜 Historial de Diagnosticos Foliares")
-    if not st.session_state.history:
-        st.info("Aun no hay diagnosticos registrados.")
-    else:
-        pdf_buffer_all = generar_pdf_diagnosticos(st.session_state.history)
-        st.download_button(
-            "📄 Exportar todo el historial a PDF",
-            data=pdf_buffer_all,
-            file_name="historial_agrodetect.pdf",
-            mime="application/pdf",
-        )
-    for item in st.session_state.history:
-        d_meta = COFFEE_DISEASES[item["primaryDisease"]]
-        col_h_img, col_h_body = st.columns([1, 3], gap="medium")
-        with col_h_img:
-            if item.get("image_path") and os.path.exists(item["image_path"]):
-                st.image(item["image_path"], use_container_width=True)
-            else:
-                render_html(f"""
-                <div style="width:100%; aspect-ratio:1/1; background-color:{highlight_bg}; border:1px solid {border_color};
-                            border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:26px;">
-                    🍃
-                </div>
-                """)
-        with col_h_body:
-            render_html(f"""
-            <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:8px;">
-                <span style="background-color:{d_meta['color']}; color:white; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:12px;">{d_meta['name']}</span>
-                <span style="float:right; font-size:11px; color:gray;">{item['timestamp']}</span>
-                <h4 style="margin-top:10px; margin-bottom:2px;">Certeza: {item['primaryConfidence']*100:.1f}%</h4>
-                <p style="font-size:11px; color:{text_sub}; margin:0;">{d_meta.get('scientificName', '')}</p>
-            </div>
-            """)
-            with st.expander("Ver recomendacion completa"):
-                render_html(construir_recomendacion_html(item.get("recommendation", []), text_sub))
-        render_html("<div style='margin-bottom:14px;'></div>")
-
-# ----------------------------------------------------
 # TAB: GUIAS TECNICAS
 # ----------------------------------------------------
 elif tab_choice == "GUIAS TECNICAS":
@@ -923,29 +881,23 @@ elif tab_choice == "GUIAS TECNICAS":
             st.info(f"**Manejo Agronomico:** {info['recommendation']}")
 
 # ----------------------------------------------------
-# TAB: GITHUB
+# TAB: COMENTARIOS
 # ----------------------------------------------------
-elif tab_choice == "GITHUB":
-    st.subheader("💬 Registro de Control de Calidad GitHub")
-    st.write("Cada observacion queda registrada como un Issue en GitHub con la etiqueta `feedback`.")
+elif tab_choice == "COMENTARIOS":
+    st.subheader("💬 Comentarios y Retroalimentacion")
+    st.write("Aqui puedes ver los comentarios que se han dejado sobre los diagnosticos.")
 
     if not GITHUB_TOKEN or not GITHUB_REPO:
-        st.error("⚠️ Configura los secrets `GITHUB_TOKEN` y `GITHUB_REPO` en Streamlit Cloud.")
-    else:
-        st.info(f"Conectado a: `{GITHUB_REPO}`")
+        st.error("⚠️ El servicio de comentarios no esta configurado.")
 
     feedback_list = obtener_feedback_github()
     if not feedback_list:
-        st.info("Aun no hay retroalimentacion registrada.")
+        st.info("Aun no hay comentarios registrados.")
     else:
         for fb in feedback_list:
-            icon = "🟢" if fb['estado'] == 'open' else "🔴"
             render_html(f"""
             <div style="padding:14px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:14px; margin-bottom:10px;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:11px; color:#9CA3AF; font-family:monospace;">{fb['fecha']} {icon}</span>
-                    <a href="{fb['url']}" target="_blank" style="font-size:11px; color:#D97706;">Ver en GitHub →</a>
-                </div>
+                <span style="font-size:11px; color:#9CA3AF; font-family:monospace;">{fb['fecha']}</span>
                 <p style="font-size:13px; margin:6px 0 0 0;"><strong>{fb['comentario']}</strong></p>
                 <p style="font-size:11px; color:{text_sub}; margin:2px 0 0 0;">Diagnostico: {fb['diagnostico_relacionado']}</p>
             </div>
