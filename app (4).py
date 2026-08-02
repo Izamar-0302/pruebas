@@ -84,6 +84,24 @@ def guardar_imagen_diagnostico(imagen_pil, diag_id):
         return None
 
 
+def imagen_html_embed(path, height="260px", radius="18px", border_col="#EAE3D9"):
+    """
+    Codifica una imagen en base64 y la devuelve como <img> embebido en HTML,
+    con bordes redondeados y sombra suave para que combine con el diseno de tarjetas.
+    """
+    try:
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        return (
+            f'<img src="data:image/jpeg;base64,{b64}" '
+            f'style="width:100%; height:{height}; object-fit:cover; border-radius:{radius}; '
+            f'border:1px solid {border_col}; box-shadow:0 4px 14px rgba(44,26,17,0.18); '
+            f'margin-bottom:16px; display:block;" />'
+        )
+    except Exception:
+        return ""
+
+
 # ----------------------------------------------------
 # EXPORTAR DIAGNOSTICO(S) A PDF
 # ----------------------------------------------------
@@ -641,8 +659,19 @@ st.markdown(f"""
 # ICONO: GRANO DE CAFE (reemplaza la "o" de AgroDetect)
 # ----------------------------------------------------
 BEAN_ICON = """<svg class="brand-bean" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-    <ellipse cx="12" cy="12" rx="9.5" ry="7" fill="#6F4E37" transform="rotate(48 12 12)"/>
-    <path d="M12 5.5 C9.5 8.5 9.5 15.5 12 18.5" stroke="#2C1A11" stroke-width="1.6" fill="none" stroke-linecap="round" transform="rotate(48 12 12)"/>
+    <defs>
+        <linearGradient id="beanBodyGrad" x1="10%" y1="5%" x2="90%" y2="100%">
+            <stop offset="0%" stop-color="#B47C4E"/>
+            <stop offset="45%" stop-color="#7A4A26"/>
+            <stop offset="100%" stop-color="#3F2716"/>
+        </linearGradient>
+    </defs>
+    <g transform="rotate(16 12 12)">
+        <ellipse cx="12" cy="12" rx="6.1" ry="9.6" fill="url(#beanBodyGrad)"/>
+        <path d="M12 3.6 C10.3 6.6 10 9.3 11.3 12 C10 14.7 10.3 17.4 12 20.4"
+              stroke="#F2E2C8" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.85"/>
+        <ellipse cx="9.6" cy="6.6" rx="1.4" ry="2.3" fill="#F7ECDA" opacity="0.45"/>
+    </g>
 </svg>"""
 
 # ----------------------------------------------------
@@ -778,7 +807,7 @@ if tab_choice == "DIAGNOSTICO":
             """)
 
             if cd.get("image_path") and os.path.exists(cd["image_path"]):
-                st.image(cd["image_path"], use_container_width=True)
+                render_html(imagen_html_embed(cd["image_path"], height="280px", radius="18px", border_col=border_color))
 
             ct, cp = st.columns([2, 1])
             with ct:
@@ -870,7 +899,7 @@ elif tab_choice == "HISTORIAL":
         col_h_img, col_h_txt = st.columns([1, 4])
         with col_h_img:
             if item.get("image_path") and os.path.exists(item["image_path"]):
-                st.image(item["image_path"], use_container_width=True)
+                render_html(imagen_html_embed(item["image_path"], height="120px", radius="14px", border_col=border_color))
         with col_h_txt:
             render_html(f"""
             <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:12px;">
