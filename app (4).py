@@ -1,7 +1,6 @@
 import streamlit as st
 import json
 import os
-import re
 import shutil
 import tempfile
 from datetime import datetime
@@ -95,118 +94,18 @@ def interpretar_prediccion(probs, clases, umbral):
     }
 
 
-def limpiar_respuesta_groq(texto):
-    """Limpia bloques de codigo markdown y extrae JSON o texto plano."""
-    # Quitar bloques ```json ... ``` o ```html ... ``` o ``` ... ```
-    texto = re.sub(r'```(?:json|html)?\s*', '', texto, flags=re.IGNORECASE)
-    texto = re.sub(r'\s*```', '', texto)
-    texto = texto.strip()
-    return texto
-
-
-def parsear_recomendacion(texto):
-    """Intenta parsear JSON, luego markdown ## 01, luego HTML. Si todo falla, devuelve None."""
-    texto_limpio = limpiar_respuesta_groq(texto)
-
-    # 1. Intentar JSON
-    try:
-        data = json.loads(texto_limpio)
-        if isinstance(data, list) and len(data) >= 3:
-            secciones = []
-            for item in data:
-                secciones.append({
-                    "num": str(item.get("num", "01")).zfill(2),
-                    "titulo": item.get("titulo", item.get("title", "")),
-                    "texto": item.get("texto", item.get("text", item.get("contenido", "")))
-                })
-            return secciones
-    except Exception:
-        pass
-
-    # 2. Intentar HTML con rec-section
-    if '<div class="rec-section"' in texto_limpio or "<div class='rec-section'" in texto_limpio:
-        secciones = []
-        # Extraer bloques rec-section de forma robusta
-        pattern = r'<div\s+class=["\']rec-section["\']\s*>(.*?)</div>\s*</div>\s*</div>'
-        blocks = re.findall(pattern, texto_limpio, re.DOTALL)
-        if not blocks:
-            pattern2 = r'<div\s+class=["\']rec-section["\']\s*>(.*?)</div>\s*</div>'
-            blocks = re.findall(pattern2, texto_limpio, re.DOTALL)
-        for block in blocks:
-            num_m = re.search(r'<div\s+class=["\']rec-num["\'][^>]*>(\d+)</div>', block)
-            title_m = re.search(r'<div\s+class=["\']rec-title["\'][^>]*>(.*?)</div>', block)
-            text_m = re.search(r'<p\s+class=["\']rec-text["\'][^>]*>(.*?)</p>', block)
-            if num_m and title_m:
-                secciones.append({
-                    "num": num_m.group(1).zfill(2),
-                    "titulo": re.sub(r'<[^>]+>', '', title_m.group(1)).strip(),
-                    "texto": re.sub(r'<[^>]+>', '', text_m.group(1)).strip() if text_m else ""
-                })
-        if secciones:
-            return secciones
-
-    # 3. Intentar Markdown ## 01. Titulo
-    secciones = []
-    patron = r'(?:##\s*)?(\d{1,2})[\.\)]\s*(.+?)(?=\n(?:##\s*)?\d{1,2}[\.\)]|\Z)'
-    matches = list(re.finditer(patron, texto_limpio, re.DOTALL))
-    for m in matches:
-        num = m.group(1).zfill(2)
-        lines = m.group(2).strip().split('\n')
-        titulo = lines[0].strip()
-        texto_sec = '\n'.join(lines[1:]).strip()
-        secciones.append({"num": num, "titulo": titulo, "texto": texto_sec})
-    if len(secciones) >= 3:
-        return secciones
-
-    return None
-
-
 def obtener_recomendacion(clase, clase_secundaria=None):
-    """Genera recomendacion estructurada con Groq (JSON); si falla, usa respaldo."""
-    api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
-    respaldo = RECOMENDACIONES_ESTRUCTURADAS.get(clase, RECOMENDACIONES_ESTRUCTURADAS["sana"])
-
-    if not api_key:
-        return respaldo
-
-    nombre = COFFEE_DISEASES[clase]["name"]
-    categoria = COFFEE_DISEASES[clase]["category"]
-
-    extra = ""
+    """Devuelve recomendacion estructurada curada profesionalmente.
+    Groq fue removido porque no respeta formatos estructurados consistentemente."""
+    base = RECOMENDACIONES_ESTRUCTURADAS.get(clase, RECOMENDACIONES_ESTRUCTURADAS["sana"])
     if clase_secundaria:
-        extra = f" NOTA: tambien detecto signos de {COFFEE_DISEASES[clase_secundaria]['name']}. Incluye breve diferenciacion."
-
-    prompt = (
-        "Eres agronomo senior IHCAFE. Diagnostico: " + nombre + " (" + categoria + "). "
-        "Responde UNICAMENTE con un array JSON valido de 5 objetos. "
-        "NO uses markdown, NO uses HTML, NO uses bloques de codigo. Solo JSON puro.\n\n"
-        "Formato exacto:\n"
-        '[{"num":"01","titulo":"Diferenciacion a simple vista","texto":"3-5 oraciones..."},'
-        '{"num":"02","titulo":"Manejo agronomico preventivo y correctivo","texto":"..."},'
-        '{"num":"03","titulo":"Consulta a un tecnico IHCAFE","texto":"..."},'
-        '{"num":"04","titulo":"Monitoreo y seguimiento","texto":"..."},'
-        '{"num":"05","titulo":"Registro y trazabilidad","texto":"..."}]\n\n'
-        "Cada 'texto' debe tener 3-5 oraciones tecnicas y detalladas."
-        + extra
-    )
-
-    try:
-        from groq import Groq
-        cliente = Groq(api_key=api_key)
-        resp = cliente.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=1200,
-        )
-        texto = resp.choices[0].message.content.strip()
-        parsed = parsear_recomendacion(texto)
-        if parsed and len(parsed) >= 3:
-            return parsed
-        return respaldo
-    except Exception as e:
-        st.warning(f"Groq no disponible ({e}). Usando recomendacion curada.")
-        return respaldo
+        extra = {
+            "num": "06",
+            "titulo": f"Nota: Posible coinfeccion con {COFFEE_DISEASES[clase_secundaria]['name']}",
+            "texto": f"El sistema detecto signos secundarios de {COFFEE_DISEASES[clase_secundaria]['name']}. Se recomienda inspeccion visual adicional en el enves de las hojas y consulta con tecnico IHCAFE para confirmar diagnostico diferencial antes de aplicar tratamientos."
+        }
+        return base + [extra]
+    return base
 
 
 # ============================================================
@@ -391,7 +290,7 @@ def guardar_historial():
 
 
 # ----------------------------------------------------
-# SESSION STATE
+# SESSION STATE + LIMPIEZA DE HISTORIAL VIEJO
 # ----------------------------------------------------
 if "theme" not in st.session_state:
     st.session_state.theme = "claro"
@@ -408,6 +307,40 @@ if "history" not in st.session_state:
         st.session_state.history = []
 if "current_diag" not in st.session_state:
     st.session_state.current_diag = st.session_state.history[0] if st.session_state.history else None
+
+# LIMPIAR historial viejo: si recommendation es string o contiene HTML, reemplazar por respaldo curado
+for item in st.session_state.history:
+    rec = item.get("recommendation", [])
+    clase = item.get("primaryDisease", "sana")
+    es_malo = False
+    if isinstance(rec, str):
+        es_malo = True
+    elif isinstance(rec, list) and len(rec) > 0:
+        if isinstance(rec[0], str):
+            es_malo = True
+        elif isinstance(rec[0], dict):
+            # Verificar si el dict contiene HTML en sus valores
+            txt = str(rec[0].get("texto", "")) + str(rec[0].get("titulo", ""))
+            if "<div" in txt or "<p" in txt or "class=" in txt:
+                es_malo = True
+    if es_malo:
+        item["recommendation"] = RECOMENDACIONES_ESTRUCTURADAS.get(clase, RECOMENDACIONES_ESTRUCTURADAS["sana"])
+
+if st.session_state.current_diag:
+    rec = st.session_state.current_diag.get("recommendation", [])
+    clase = st.session_state.current_diag.get("primaryDisease", "sana")
+    es_malo = False
+    if isinstance(rec, str):
+        es_malo = True
+    elif isinstance(rec, list) and len(rec) > 0:
+        if isinstance(rec[0], str):
+            es_malo = True
+        elif isinstance(rec[0], dict):
+            txt = str(rec[0].get("texto", "")) + str(rec[0].get("titulo", ""))
+            if "<div" in txt or "<p" in txt or "class=" in txt:
+                es_malo = True
+    if es_malo:
+        st.session_state.current_diag["recommendation"] = RECOMENDACIONES_ESTRUCTURADAS.get(clase, RECOMENDACIONES_ESTRUCTURADAS["sana"])
 
 modelo = cargar_modelo()
 CLASES, IMG_SIZE, UMBRAL = cargar_config()
@@ -619,7 +552,7 @@ if tab_choice == "DIAGNOSTICO":
                 st.warning(cd["coinfeccion"])
 
             rec_data = cd.get("recommendation", [])
-            if isinstance(rec_data, list) and len(rec_data) > 0:
+            if isinstance(rec_data, list) and len(rec_data) > 0 and isinstance(rec_data[0], dict):
                 html = f"""
                 <div class="rec-container">
                     <div class="rec-header">
@@ -643,7 +576,7 @@ if tab_choice == "DIAGNOSTICO":
                 html += "</div>"
                 st.markdown(html, unsafe_allow_html=True)
             else:
-                txt = rec_data if isinstance(rec_data, str) else "Sin recomendacion."
+                txt = str(rec_data) if rec_data else "Sin recomendacion disponible."
                 st.markdown(f"""
                 <div class="rec-container">
                     <p style="font-size:13px; line-height:1.6; margin:0; white-space: pre-line;">{txt}</p>
@@ -680,12 +613,18 @@ elif tab_choice == "HISTORIAL":
         st.info("Aun no hay diagnosticos registrados.")
     for item in st.session_state.history:
         d_meta = COFFEE_DISEASES[item["primaryDisease"]]
+        rec = item.get("recommendation", [])
+        rec_text = ""
+        if isinstance(rec, list) and len(rec) > 0 and isinstance(rec[0], dict):
+            rec_text = "<br>".join([f"<b>{s['num']}. {s['titulo']}</b>: {s['texto']}" for s in rec])
+        else:
+            rec_text = str(rec)
         st.markdown(f"""
         <div style="padding:16px; background-color:{card_bg}; border:1px solid {border_color}; border-radius:16px; margin-bottom:12px;">
             <span style="background-color:{d_meta['color']}; color:white; font-size:10px; font-weight:bold; padding:4px 10px; border-radius:12px;">{d_meta['name']}</span>
             <span style="float:right; font-size:11px; color:gray;">{item['timestamp']}</span>
             <h4 style="margin-top:10px; margin-bottom:4px;">Certeza: {item['primaryConfidence']*100:.1f}%</h4>
-            <p style="font-size:12px; color:{text_sub};">{item.get('recommendation','')}</p>
+            <p style="font-size:12px; color:{text_sub};">{rec_text}</p>
         </div>
         """, unsafe_allow_html=True)
 
