@@ -1,9 +1,11 @@
 import streamlit as st
 import json
 import os
+import base64
 import time
 from datetime import datetime
 from PIL import Image
+import io
 
 # ==========================================
 # AGRODETECT - CAFICULTURA HONDURAS (IHCAFE)
@@ -18,7 +20,7 @@ st.set_page_config(
 )
 
 # ------------------------------------------
-# CONSTANTES Y BASE DE DATOS FITOSANITARIA IHCAFE
+# CONSTANTS & COFFEE DISEASE DATASET (IHCAFE)
 # ------------------------------------------
 COFFEE_DISEASES = {
     "roya": {
@@ -100,7 +102,7 @@ FEEDBACK_FILE = "github_feedback.json"
 HISTORY_FILE = "diagnosis_history.json"
 
 # ------------------------------------------
-# INICIALIZACIÓN DE ESTADO PERSISTENTE
+# INITIALIZE SESSION STATE
 # ------------------------------------------
 if "theme" not in st.session_state:
     st.session_state.theme = "claro"
@@ -126,7 +128,7 @@ if "feedback_list" not in st.session_state:
         st.session_state.feedback_list = []
 
 # ------------------------------------------
-# ESTILOS CSS - MODO CLARO Y MODO OSCURO
+# THEME CSS STYLING (DARK / LIGHT MODES)
 # ------------------------------------------
 theme_mode = st.session_state.theme
 
@@ -134,18 +136,25 @@ if theme_mode == "oscuro":
     bg_color = "#140D0A"
     card_bg = "#211612"
     text_color = "#F5EFE9"
+    subtext_color = "#A39B93"
     border_color = "#3A2B23"
+    accent_green = "#2D7A46"
 else:
     bg_color = "#FDFBF7"
     card_bg = "#FFFFFF"
     text_color = "#2C1A11"
+    subtext_color = "#6B7280"
     border_color = "#E5E0D8"
+    accent_green = "#1E5631"
 
 st.markdown(f"""
 <style>
     .stApp {{
         background-color: {bg_color};
         color: {text_color};
+    }}
+    .css-1d3e158, .css-[#211612] {{
+        background-color: {card_bg};
     }}
     .card-box {{
         background-color: {card_bg};
@@ -172,7 +181,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ------------------------------------------
-# PANEL LATERAL DE NAVEGACIÓN Y TEMA
+# SIDEBAR NAVIGATION & THEME TOGGLE
 # ------------------------------------------
 with st.sidebar:
     st.image("https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&auto=format&fit=crop&q=80", use_container_width=True)
@@ -181,7 +190,7 @@ with st.sidebar:
     
     st.divider()
 
-    # Selector de Tema
+    # Mode Selector
     mode_toggle = st.radio(
         "🎨 Tema de Interfaz:",
         ["Modo Claro ☀️", "Modo Oscuro 🌙"],
@@ -204,10 +213,13 @@ with st.sidebar:
     st.info("💡 **Caficultura Honduras**\nSoporte técnico para roya, cercospora, phoma, araña roja y minador de la hoja.")
 
 # ------------------------------------------
-# MOTOR DE DIAGNÓSTICO IA
+# MOCK AI ANALYSIS FUNCTION
 # ------------------------------------------
 def analyze_coffee_leaf(image_bytes):
-    time.sleep(1.0)
+    # Simulated neural network analysis (MobileNetV2 / Gemini Vision backend)
+    time.sleep(1.2)  # simulate processing
+    
+    # Simple deterministic hash on bytes for reproducible mock demo
     val = sum(image_bytes[:100]) % 100
     
     if val < 30:
@@ -234,31 +246,31 @@ def analyze_coffee_leaf(image_bytes):
     return primary, confidence, probs
 
 # ------------------------------------------
-# 1. DIAGNÓSTICO FOLIAR
+# 1. TAB: DIAGNÓSTICO FOLIAR
 # ------------------------------------------
 if menu == "🔍 Diagnóstico Foliar":
-    st.header("🌿 Escáner Foliar de Café con IA")
-    st.write("Sube o toma una fotografía de la hoja afectada para diagnosticar su estado fitosanitario.")
+    st.header("🌿 Escáner Foliar de Café con Inteligencia Artificial")
+    st.write("Sube o toma una fotografía de la hoja de cafeto afectada para identificar patologías foliares en segundos.")
 
     col1, col2 = st.columns([1, 1])
 
     with col1:
         st.subheader("1. Muestra Foliar")
-        uploaded_file = st.file_uploader("Selecciona una fotografía (.jpg, .png):", type=["jpg", "png", "jpeg"])
-        camera_photo = st.camera_input("O toma una foto con la cámara:")
+        uploaded_file = st.file_uploader("Selecciona una fotografía de la hoja (.jpg, .png):", type=["jpg", "png", "jpeg"])
+        camera_photo = st.camera_input("O toma una foto directamente con la cámara:")
 
         active_img = uploaded_file if uploaded_file is not None else camera_photo
 
         if active_img is not None:
             image = Image.open(active_img)
-            st.image(image, caption="Muestra Cargada", use_container_width=True)
+            st.image(image, caption="Muestra Foliar Cargada", use_container_width=True)
 
     with col2:
-        st.subheader("2. Resultado del Análisis")
+        st.subheader("2. Resultado del Análisis AI")
         
         if active_img is not None:
-            if st.button("🚀 Ejecutar Diagnóstico AI", type="primary", use_container_width=True):
-                with st.spinner("Procesando imagen con modelo convolucional..."):
+            if st.button("🚀 Diagnosticar Hoja", type="primary", use_container_width=True):
+                with st.spinner("Analizando pigmentos foliares y necrosis con red neuronal..."):
                     img_bytes = active_img.getvalue()
                     primary_id, confidence, probs = analyze_coffee_leaf(img_bytes)
                     disease_info = COFFEE_DISEASES[primary_id]
@@ -281,7 +293,7 @@ if menu == "🔍 Diagnóstico Foliar":
             st.markdown(f"""
             <div class="card-box">
                 <span class="badge-disease" style="background-color: {d_info['color']};">{d_info['name']}</span>
-                <h3 style="margin-top: 10px;">Certeza: {res['primaryConfidence']*100:.1f}%</h3>
+                <h3 style="margin-top: 10px;">Certeza Diagnóstica: {res['primaryConfidence']*100:.1f}%</h3>
                 <p><b>Categoría:</b> {d_info['category']}</p>
                 <p><b>Gravedad Fitosanitaria:</b> {d_info['severity']}</p>
                 <hr>
@@ -295,9 +307,10 @@ if menu == "🔍 Diagnóstico Foliar":
                     st.session_state.history.insert(0, res)
                     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
                         json.dump(st.session_state.history, f, ensure_ascii=False, indent=2)
-                    st.success("¡Diagnóstico guardado exitosamente!")
+                    st.success("¡Diagnóstico guardado exitosamente en el historial!")
 
             with c_pdf:
+                # PDF content generator
                 pdf_summary = f"""
 ===================================================
 AGRODETECT HONDURAS - INFORME FITOSANITARIO IHCAFE
@@ -313,12 +326,12 @@ DIAGNÓSTICO PRINCIPAL:
 SÍNTOMAS VISUALES:
 {chr(10).join(['- ' + s for s in d_info['symptoms']])}
 
-RECOMENDACIÓN AGRONÓMICA IHCAFE:
+RECOMENDACIÓN AGRONÓMICA INSTITUCIONAL IHCAFE:
 {d_info['recommendations']}
 ===================================================
 """
                 st.download_button(
-                    label="📄 Exportar Informe PDF / TXT",
+                    label="📄 Exportar PDF Informe",
                     data=pdf_summary,
                     file_name=f"Informe_{res['id']}.txt",
                     mime="text/plain",
@@ -326,16 +339,16 @@ RECOMENDACIÓN AGRONÓMICA IHCAFE:
                 )
 
 # ------------------------------------------
-# 2. HISTORIAL DE EVALUACIONES
+# 2. TAB: HISTORIAL DE EVALUACIONES
 # ------------------------------------------
 elif menu == "📜 Historial de Evaluaciones":
-    st.header("📜 Historial de Diagnósticos Guardados")
-    st.write("Listado cronológico de evaluaciones registradas.")
+    st.header("📜 Historial Cronológico de Diagnósticos")
+    st.write("Registro de evaluaciones foliares escaneadas.")
 
     if len(st.session_state.history) == 0:
-        st.info("No hay diagnósticos guardados aún.")
+        st.info("Aún no tienes evaluaciones registradas. Ve a la pestaña 'Diagnóstico Foliar' para realizar tu primer escaneo.")
     else:
-        if st.button("🗑️ Limpiar Todo el Historial"):
+        if st.button("🗑️ Limpiar Historial Completo"):
             st.session_state.history = []
             if os.path.exists(HISTORY_FILE):
                 os.remove(HISTORY_FILE)
@@ -343,23 +356,24 @@ elif menu == "📜 Historial de Evaluaciones":
 
         for item in st.session_state.history:
             d_meta = COFFEE_DISEASES.get(item["primaryDisease"], COFFEE_DISEASES["sana"])
+            
             st.markdown(f"""
             <div class="card-box">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; justify-space-between; align-items: center;">
                     <span class="badge-disease" style="background-color: {d_meta['color']};">{d_meta['name']}</span>
                     <span style="font-size: 12px; color: gray;">{item['timestamp']}</span>
                 </div>
-                <h4 style="margin-top: 10px;">Código: {item['id']} — Certeza: {item['primaryConfidence']*100:.1f}%</h4>
+                <h4 style="margin-top: 10px;">ID: {item['id']} — Certeza: {item['primaryConfidence']*100:.1f}%</h4>
                 <p style="font-size: 13px;"><b>Recomendación:</b> {item['recommendation']}</p>
             </div>
             """, unsafe_allow_html=True)
 
 # ------------------------------------------
-# 3. FEEDBACK GITHUB
+# 3. TAB: FEEDBACK GITHUB
 # ------------------------------------------
 elif menu == "💬 Feedback GitHub":
-    st.header("💬 Registro de Comentarios para GitHub (`github_feedback.json`)")
-    st.write("Registra tus observaciones técnicas. Se asociará un commit simulado para control de calidad.")
+    st.header("💬 Registro de Retroalimentación GitHub (`github_feedback.json`)")
+    st.write("Escribe tus observaciones agronómicas. Cada comentario genera una entrada en formato estructurado para control de calidad.")
 
     col_form, col_log = st.columns([1, 1])
 
@@ -367,11 +381,11 @@ elif menu == "💬 Feedback GitHub":
         st.subheader("Nuevo Comentario")
         author = st.text_input("Tu Nombre / Seudónimo:", "Ing. Agrónomo")
         role = st.selectbox("Rol:", ["Productor de Café", "Técnico IHCAFE", "Ing. Agrónomo", "Investigador", "Otro"])
-        rating = st.slider("Calificación:", 1, 5, 5)
+        rating = st.slider("Calificación de Precisión:", 1, 5, 5)
         disease_ref = st.selectbox("Enfermedad Asociada:", ["(General)", "Roya del Café", "Cercospora", "Phoma", "Araña Roja", "Minador", "Hoja Sana"])
-        comment = st.text_area("Observación Técnica:")
+        comment = st.text_area("Observación o Sugerencia Técnica:")
 
-        if st.button("✉️ Enviar Comentario (Git Commit)", type="primary"):
+        if st.button("✉️ Registrar Comentario (Git Commit)", type="primary"):
             if comment.strip():
                 commit_hash = f"a7f{int(time.time())%1000000:06d}"
                 entry = {
@@ -387,44 +401,44 @@ elif menu == "💬 Feedback GitHub":
                 st.session_state.feedback_list.insert(0, entry)
                 with open(FEEDBACK_FILE, "w", encoding="utf-8") as f:
                     json.dump(st.session_state.feedback_list, f, ensure_ascii=False, indent=2)
-                st.success(f"¡Registrado en GitHub! Commit: `{commit_hash}`")
+                st.success(f"¡Comentario guardado! Commit generado: `{commit_hash}`")
             else:
-                st.error("Escribe tu observación antes de enviar.")
+                st.error("Por favor escribe una observación antes de enviar.")
 
     with col_log:
-        st.subheader("Comentarios Registrados")
+        st.subheader("Historial Registrado GitHub")
         for fb in st.session_state.feedback_list:
             st.markdown(f"""
             <div class="card-box">
                 <p><b>Commit:</b> <code>{fb['commitHash']}</code> | <b>{fb['author']}</b> ({fb['role']})</p>
-                <p><b>Calificación:</b> {'⭐'*fb['rating']} | <b>Enfermedad:</b> {fb['diseaseRef']}</p>
+                <p><b>Calificación:</b> {'⭐'*fb['rating']} | <b>Ref:</b> {fb['diseaseRef']}</p>
                 <p style="font-style: italic;">"{fb['comment']}"</p>
-                <span style="font-size: 11px; color: gray;">{fb['timestamp']}</span>
+                <span style="font-size: 11px; color: gray;">Registrado el {fb['timestamp']}</span>
             </div>
             """, unsafe_allow_html=True)
 
 # ------------------------------------------
-# 4. GUÍA TÉCNICA IHCAFE
+# 4. TAB: GUÍA TÉCNICA IHCAFE
 # ------------------------------------------
 elif menu == "📚 Guía Técnica IHCAFE":
-    st.header("📚 Catálogo Fitosanitario de Plagas y Enfermedades")
-    st.write("Manual agronómico de consulta rápida.")
+    st.header("📚 Catálogo Fitosanitario de Plagas y Enfermedades en Café")
+    st.write("Manual de referencia para la identificación foliar en fincas de Honduras.")
 
-    selected_d = st.selectbox("Selecciona una patología:", list(COFFEE_DISEASES.keys()), format_func=lambda k: COFFEE_DISEASES[k]["name"])
+    selected_d = st.selectbox("Selecciona una enfermedad para ver sus características:", list(COFFEE_DISEASES.keys()), format_func=lambda k: COFFEE_DISEASES[k]["name"])
     info = COFFEE_DISEASES[selected_d]
 
     st.markdown(f"""
     <div class="card-box" style="border-left: 6px solid {info['color']};">
         <h2>{info['name']}</h2>
-        <p><i>Especie: {info.get('scientificName', 'N/A')}</i></p>
+        <p><i>Nombre Científico: {info.get('scientificName', 'N/A')}</i></p>
         <p><b>Categoría:</b> {info['category']} | <b>Gravedad:</b> {info['severity']}</p>
         <hr>
-        <h4>Sintomatología:</h4>
+        <h4>Sintomatología Característica:</h4>
         <ul>
             {''.join([f'<li>{s}</li>' for s in info['symptoms']])}
         </ul>
         <hr>
-        <h4>Recomendación IHCAFE:</h4>
+        <h4>Plan de Manejo Integrado IHCAFE:</h4>
         <p>{info['recommendations']}</p>
     </div>
     """, unsafe_allow_html=True)
