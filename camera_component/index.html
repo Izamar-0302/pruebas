@@ -73,10 +73,22 @@ function sendValue(value) {
   }, "*");
 }
 
+let _lastHeight = 0;
 function setFrameHeight() {
-  const h = document.getElementById('wrap').scrollHeight + 16;
+  const h = Math.ceil(document.getElementById('wrap').getBoundingClientRect().height) + 16;
+  if (Math.abs(h - _lastHeight) < 3) return; // evita bucles por diferencias de subpixel
+  _lastHeight = h;
   window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
 }
+
+let _resizeTimer = null;
+function scheduleHeightUpdate() {
+  if (_resizeTimer) clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(setFrameHeight, 80);
+}
+
+const _resizeObserver = new ResizeObserver(() => scheduleHeightUpdate());
+_resizeObserver.observe(document.getElementById('wrap'));
 
 async function startCamera() {
   stopCamera();
@@ -135,12 +147,6 @@ startBtn.addEventListener('click', startCamera);
 captureBtn.addEventListener('click', capturePhoto);
 retryBtn.addEventListener('click', retry);
 facingSelect.addEventListener('change', () => { if (stream) startCamera(); });
-
-window.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'streamlit:render') {
-    setFrameHeight();
-  }
-});
 
 window.parent.postMessage({ type: "streamlit:componentReady", apiVersion: 1 }, "*");
 setTimeout(setFrameHeight, 150);
