@@ -27,7 +27,7 @@ st.set_page_config(
 MODEL_DIR = "model"
 MODEL_PATH_KERAS = os.path.join(MODEL_DIR, "agrodetect_mobilenetv2.keras.zip")
 MODEL_PATH_H5 = os.path.join(MODEL_DIR, "model.weights.h5")
-CONFIG_PATH = os.path.join(MODEL_DIR, "config_app.json")
+CONFIG_PATH = os.path.join(MODEL_DIR, "config.json")
 
 CLASES_DEFAULT = ["sana", "roya", "cercospora", "phoma", "arana_roja", "minador"]
 IMG_SIZE_DEFAULT = (224, 224)
