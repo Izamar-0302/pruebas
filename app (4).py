@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime
@@ -18,14 +19,14 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 # ====================================================
 
 st.set_page_config(
-    page_title="AgroDetect v2.0 - Diagnóstico Foliar de Café",
+    page_title="AgroDetect v2.0 - Diagnostico Foliar de Cafe",
     page_icon="🌿",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
 # ----------------------------------------------------
-# CONFIGURACIÓN GITHUB (para retroalimentación persistente)
+# CONFIGURACION GITHUB (para retroalimentacion persistente)
 # ----------------------------------------------------
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", os.environ.get("GITHUB_TOKEN"))
 GITHUB_REPO = st.secrets.get("GITHUB_REPO", os.environ.get("GITHUB_REPO"))
@@ -46,16 +47,11 @@ MARGEN_COINFECCION = 0.15
 
 @st.cache_resource(show_spinner="Cargando modelo de IA...")
 def cargar_modelo():
-    # Keras 3 exige que el archivo tenga extension .keras para reconocerlo.
-    # Como GitHub descomprime los .keras al subirlos por web, lo renombraste a .zip.
-    # Lo copiamos a un archivo temporal con la extension correcta y cargamos desde ahi.
     if os.path.exists(MODEL_PATH_KERAS):
         temp_path = os.path.join(tempfile.gettempdir(), "agrodetect_temp.keras")
         shutil.copy(MODEL_PATH_KERAS, temp_path)
         return keras.models.load_model(temp_path)
 
-    # Fallback: si GitHub descomprimio todo y no existe el .zip,
-    # reconstruimos desde config.json + model.weights.h5
     if os.path.exists(CONFIG_PATH) and os.path.exists(MODEL_PATH_H5):
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             config = json.load(f)
@@ -105,39 +101,77 @@ def interpretar_prediccion(probs, clases, umbral):
     }
 
 
+def parsear_recomendacion_estructurada(texto):
+    """Convierte texto con secciones ## 01. Titulo en lista de dicts."""
+    secciones = []
+    # Busca patrones como ## 01. Titulo o ## 1. Titulo o 01. Titulo
+    patron = r'(?:##\s*)?(\d{1,2})[\.\)]\s*(.+?)(?=\n(?:##\s*)?\d{1,2}[\.\)]|\Z)'
+    matches = list(re.finditer(patron, texto, re.DOTALL))
+
+    if not matches:
+        # Si no hay formato estructurado, devolver como una sola seccion
+        return [{"num": "01", "titulo": "Recomendacion general", "texto": texto.strip()}]
+
+    for m in matches:
+        num = m.group(1).zfill(2)
+        titulo = m.group(2).split('\n')[0].strip()
+        texto_seccion = '\n'.join(m.group(2).split('\n')[1:]).strip()
+        secciones.append({"num": num, "titulo": titulo, "texto": texto_seccion})
+
+    return secciones
+
+
 def obtener_recomendacion(clase, clase_secundaria=None):
-    """Genera la recomendacion con la API de Groq (API key en st.secrets); si no esta
-    configurada o falla la llamada, usa el texto curado de COFFEE_DISEASES como respaldo."""
+    """Genera recomendacion estructurada con Groq; si falla, usa respaldo curado."""
     api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
-    respaldo = COFFEE_DISEASES[clase]["recommendation"]
+
+    # Respaldo estructurado por enfermedad (siempre disponible)
+    respaldo = RECOMENDACIONES_ESTRUCTURADAS.get(clase, RECOMENDACIONES_ESTRUCTURADAS["sana"])
 
     if not api_key:
         return respaldo
 
-    diagnostico = COFFEE_DISEASES[clase]["name"]
+    nombre_enfermedad = COFFEE_DISEASES[clase]["name"]
+    categoria = COFFEE_DISEASES[clase]["category"]
+
+    prompt_extra = ""
     if clase_secundaria:
-        diagnostico += f" junto con posibles signos de {COFFEE_DISEASES[clase_secundaria]['name']}"
+        prompt_extra = (
+            f"ADEMAS, el sistema detecto posibles signos de {COFFEE_DISEASES[clase_secundaria]['name']}. "
+            f"Incluye una nota breve sobre como diferenciar o manejar ambas condiciones simultaneas."
+        )
+
+    prompt = (
+        "Eres un agronomo senior especializado en caficultura hondurena (IHCAFE). "
+        f"Un productor de Comayagua, Honduras, tiene un diagnostico de: {nombre_enfermedad} ({categoria}). "
+        "Genera una recomendacion TECNICA, DETALLADA y ESTRUCTURADA en EXACTAMENTE 5 secciones numeradas del 01 al 05. "
+        "Cada seccion debe tener un titulo claro y un parrafo explicativo de 3-5 oraciones. "
+        "Usa este formato obligatorio:\n\n"
+        "## 01. Diferenciacion a simple vista\n[Descripcion detallada de como identificar visualmente la enfermedad/plaga y diferenciarla de otras similares]\n\n"
+        "## 02. Manejo agronomico preventivo y correctivo\n[Acciones concretas: poda, fertilizacion, drenaje, sombra, fungicidas/acaricidas autorizados, dosis si aplica]\n\n"
+        "## 03. Consulta a un tecnico IHCAFE\n[Por que es importante confirmar con un tecnico, que muestras llevar, cuando acudir urgentemente]\n\n"
+        "## 04. Monitoreo y seguimiento\n[Frecuencia de inspeccion, indicadores de mejora o empeora, ajustes segun estacion]\n\n"
+        "## 05. Registro y trazabilidad\n[Como llevar bitacora de observaciones, tratamientos aplicados, fechas, resultados para futuras campanas]\n\n"
+        f"{prompt_extra}\n\n"
+        "Responde UNICAMENTE con las 5 secciones en el formato indicado. No agregues introduccion ni conclusion."
+    )
 
     try:
         from groq import Groq
         cliente = Groq(api_key=api_key)
-        prompt = (
-            "Eres un asistente agronomico especializado en caficultura hondurena. "
-            f"Un productor de cafe en Comayagua, Honduras, tomo una foto de una hoja de cafeto y el "
-            f"diagnostico automatico fue: {diagnostico}. "
-            "Da una recomendacion breve (maximo 4 lineas), practica y en espanol sencillo, sobre el manejo "
-            "agronomico adecuado. Si corresponde, sugiere consultar a un tecnico del IHCAFE para confirmar "
-            "el diagnostico antes de aplicar cualquier tratamiento."
-        )
         respuesta = cliente.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.4,
-            max_tokens=250,
+            temperature=0.3,
+            max_tokens=1200,
         )
-        return respuesta.choices[0].message.content.strip()
+        texto = respuesta.choices[0].message.content.strip()
+        secciones = parsear_recomendacion_estructurada(texto)
+        if len(secciones) >= 3:
+            return secciones
+        return respaldo
     except Exception as e:
-        st.warning(f"No se pudo consultar la API de Groq ({e}). Mostrando recomendacion de respaldo.")
+        st.warning(f"No se pudo consultar la API de Groq ({e}). Mostrando recomendacion curada de respaldo.")
         return respaldo
 
 
@@ -145,7 +179,6 @@ def obtener_recomendacion(clase, clase_secundaria=None):
 # GITHUB ISSUES API — Retroalimentacion persistente
 # ============================================================
 def enviar_feedback_github(comentario, diagnostico_relacionado=None):
-    """Crea un Issue en GitHub con la retroalimentacion del usuario."""
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return False, "GITHUB_TOKEN o GITHUB_REPO no configurados en secrets."
 
@@ -180,7 +213,6 @@ def enviar_feedback_github(comentario, diagnostico_relacionado=None):
 
 
 def obtener_feedback_github():
-    """Obtiene los Issues etiquetados como 'feedback' desde GitHub."""
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return []
 
@@ -201,7 +233,6 @@ def obtener_feedback_github():
             issues = response.json()
             feedback_list = []
             for issue in issues:
-                # Extraer diagnostico del body
                 body = issue.get("body", "")
                 diag = "N/A"
                 for line in body.split("\n"):
@@ -301,6 +332,52 @@ COFFEE_DISEASES = {
     }
 }
 
+# Recomendaciones estructuradas de respaldo (se usan si Groq falla)
+RECOMENDACIONES_ESTRUCTURADAS = {
+    "roya": [
+        {"num": "01", "titulo": "Diferenciacion a simple vista", "texto": "La Roya (Hemileia vastatrix) se identifica por pustulas anaranjadas en el enves de la hoja y manchas amarillentas en el haz. No confundir con Cercospora: la Roya tiene pustulas en relieve con esporas al tacto, mientras que Cercospora presenta manchas circulares planas con centro grisaceo. En estadios avanzados, la hoja se torna necrotica y cae prematuramente."},
+        {"num": "02", "titulo": "Manejo agronomico preventivo y correctivo", "texto": "Aplicar fungicidas protectores a base de oxicloruro de cobre (2.5 g/L) o caldo bordeles (0.5%) cada 21-30 dias en epoca lluviosa. Realizar poda sanitaria eliminando ramas con >50% de incidencia. Mejorar drenaje de suelos para reducir humedad foliar >90%. En zonas severas, usar fungicidas sistémicos autorizados por IHCAFE alternando mecanismos de accion."},
+        {"num": "03", "titulo": "Consulta a un tecnico IHCAFE", "texto": "Acuda al tecnico de IHCAFE si la incidencia supera el 10% de la parcela o si observa defoliacion masiva. Lleve muestras de hojas con pustulas frescas en bolsas de papel (no plastico) y registre fotografias de la distribucion en la planta. El tecnico podra confirmar si se trata de la raza IIv5 (resistente a algunos fungicidas) y ajustar el protocolo."},
+        {"num": "04", "titulo": "Monitoreo y seguimiento", "texto": "Inspeccione semanalmente durante la transicion de lluvias a seca (mayo-julio), que es el pico de infeccion. Evalue 50 plantas al azar por hectarea. Indicadores de mejora: nuevo brote sin pustulas, reduccion de esporulacion. Indicadores de empeora: expansion a brotes terminales, aparicion en frutos. Ajuste frecuencia de aplicacion segun pluviometria."},
+        {"num": "05", "titulo": "Registro y trazabilidad", "texto": "Lleve una bitacora con fecha de deteccion, porcentaje de incidencia, producto aplicado (nombre comercial e ingrediente activo), dosis, volumen de caldo por hectarea y condiciones climaticas. Esto permitira identificar resistencias, optimizar costos y cumplir con certificaciones de buenas practicas agricolas (BPA) exigidas por compradores."}
+    ],
+    "cercospora": [
+        {"num": "01", "titulo": "Diferenciacion a simple vista", "texto": "Cercospora coffeicola produce manchas circulares de 3-8 mm con centro grisaceo-necrotico y halo amarillo-anaranjado. A diferencia de la Roya, no hay pustulas en relieve ni esporas en el enves. Se confunde frecuentemente con manchas de nutricion (deficiencia de Mn), pero estas carecen del halo definido y son mas irregulares."},
+        {"num": "02", "titulo": "Manejo agronomico preventivo y correctivo", "texto": "Aumentar fertilizacion nitrogenada (urea foliar al 2%) y potasica. Regular sombra al 40-50% para reducir estres hidrico. Aplicar caldo bordeles preventivo antes de lluvias intensas. En brotes activos, usar fungicidas especificos con mancozeb o clorotalonil. Evitar trabajos en campo con follaje mojado para no diseminar esporas."},
+        {"num": "03", "titulo": "Consulta a un tecnico IHCAFE", "texto": "Consulte si las manchas aparecen en mas del 30% del follaje o si persisten tras dos aplicaciones fungicidas. El tecnico analizara niveles de N y K en suelo/hoja para descartar que sea un problema nutricional primario que debilite el tejido y facilite la infeccion."},
+        {"num": "04", "titulo": "Monitoreo y seguimiento", "texto": "Monitoree quincenalmente en epocas secas y calurosas (febrero-abril), cuando el estres hidrico potencia la enfermedad. Revise hojas del tercio medio de la planta. Mejora: nuevas hojas sin manchas, recuperacion del color verde intenso. Empeora: coalescencia de manchas, secado de bordes foliares, caida de hojas jovenes."},
+        {"num": "05", "titulo": "Registro y trazabilidad", "texto": "Registre analisis foliar bianuales, niveles de sombra (% cobertura), tipo de sombra (Inga, Erythrina, malla), fecha de aplicaciones y condiciones climaticas previas. Documente si la parcela esta en ladera expuesta al sol (mayor riesgo). Estos datos son clave para ajustar el manejo integral del cultivo."}
+    ],
+    "phoma": [
+        {"num": "01", "titulo": "Diferenciacion a simple vista", "texto": "Phoma costarricensis afecta principalmente zonas altas (>1300 msnm). Se manifiesta como lesiones oscuras, irregulares, en bordes y apices de hojas jovenes, con aspecto de quemadura o derretimiento. A diferencia de Roya o Cercospora, las lesiones son asimetricas, sin halo definido, y progresan rapidamente en brotes tiernos tras lluvias frias."},
+        {"num": "02", "titulo": "Manejo agronomico preventivo y correctivo", "texto": "Establecer cortinas rompevientos (Cypress, Eucalyptus o bambu) para reducir viento frio-humedo. Poda de formacion para mejorar aireacion. Aplicar fungicidas protectores (oxicloruro de cobre + mancozeb) antes de frentes frios. Eliminar brotes afectados con corte limpio y desinfeccion de herramientas con alcohol al 70% entre plantas."},
+        {"num": "03", "titulo": "Consulta a un tecnico IHCAFE", "texto": "Obligatorio en zonas altas si la mortalidad de brotes supera el 5%. El tecnico evaluara si se requiere cambio de variedad a una mas tolerante (ej. Lempira, Parainema) o si hay que reforzar el sistema de cortinas. Lleve registro de temperaturas minimas y horas de humedad relativa >85%."},
+        {"num": "04", "titulo": "Monitoreo y seguimiento", "texto": "Vigile diariamente tras frentes frios o neblina persistente. La enfermedad progresa en 48-72 horas bajo esas condiciones. Indicadores de control: brotes nuevos con hojas intactas, ausencia de lesiones en el tercio superior. Alarma: presencia de picnidios negros (estructuras reproductivas del hongo) en lesiones maduras."},
+        {"num": "05", "titulo": "Registro y trazabilidad", "texto": "Documente altitud exacta (GPS), exposicion geografica, velocidad del viento dominante, tipo de cortina existente y densidad de siembra. Registre fechas de heladas o neblina prolongada. Esta informacion permite a IHCAFE mapear zonas de riesgo y recomendar manejo diferenciado por microclima."}
+    ],
+    "arana_roja": [
+        {"num": "01", "titulo": "Diferenciacion a simple vista", "texto": "Oligonychus coffeae causa broncizado uniforme en el haz de la hoja (cambio a tono cafe-rojizo), a diferencia de la Roya que es irregular y por el enves. En el enves se observan puntos oscuros (acaros) y telaranas finas en condiciones de sequia. No confundir con deficiencia de hierro, que es amarillamiento interveinal uniforme sin broncizado."},
+        {"num": "02", "titulo": "Manejo agronomico preventivo y correctivo", "texto": "Aplicar azufre mojable (2-3 g/L) o acaricidas botanicos a base de aceite de nim (3-5 mL/L) en el enves de las hojas. Incrementar humedad relativa con riego por aspersion (evita telaranas). Evitar insecticidas de amplio espectro (organofosforados, piretroides) que eliminan depredadores naturales como Stethorus y Amblyseius."},
+        {"num": "03", "titulo": "Consulta a un tecnico IHCAFE", "texto": "Solicite asistencia si la poblacion supera 10 acaros por hoja o si el broncizado afecta mas del 20% del follaje. El tecnico realizara conteos con lupa de campo y determinara si se requiere acaricida quimico especifico (etoxazole, spiromesifen) respetando periodos de carencia para cosecha."},
+        {"num": "04", "titulo": "Monitoreo y seguimiento", "texto": "Inspeccione semanalmente en epoca seca (noviembre-abril), cuando la poblacion se dispara. Use una lupa de 10x en el enves de 20 hojas por planta (muestreo en 4 puntos cardinales de la parcela). Control efectivo: <3 acaros/hoja y presencia de acaros depredadores. Alarma: telaranas abundantes, hojas secas permaneciendo en la planta."},
+        {"num": "05", "titulo": "Registro y trazabilidad", "texto": "Registre conteos de acaros/plaga y acaros beneficios por fecha, producto aplicado, pH del agua de caldo (debe ser 6.0-7.0 para azufre), y estacion climatica. Documente si hay cultivos vecinos (maiz, frijol) que puedan hospedar la plaga. Esto ayuda a predecir brotes futuros y programar liberaciones de enemigos naturales."}
+    ],
+    "minador": [
+        {"num": "01", "titulo": "Diferenciacion a simple vista", "texto": "Leucoptera coffeella crea galerias serpenteantes transparentes o marrones en el mesofilo de la hoja (minas), visibles a contraluz. El enrollado foliar prematuro es caracteristico. Diferenciar de danos mecanicos o de trips: las minas tienen trayectoria definida y frass (excrementos) en linea dentro de la galeria, visible con lupa."},
+        {"num": "02", "titulo": "Manejo agronomico preventivo y correctivo", "texto": "Favorecer biodiversidad floral (boton de oro, cilantro) para atraer avispas parasitoides (Cirrospilus, Closterocerus). En umbrales criticos (>5% de hojas minadas), aplicar Bacillus thuringiensis kurstaki o extractos de nim. Recolectar y destruir hojas severamente minadas (no compostar). Mantener sombra moderada; el minador prospera en exceso de sol."},
+        {"num": "03", "titulo": "Consulta a un tecnico IHCAFE", "texto": "Consulte si la incidencia supera el 15% de hojas afectadas o si hay brotes con enrollado masivo. El tecnico evaluara la presencia de parasitoides (hojas con agujeros de salida del parasitoide) y determinara si es viable una liberacion masiva de enemigos naturales en lugar de quimicos."},
+        {"num": "04", "titulo": "Monitoreo y seguimiento", "texto": "Revise quincenalmente hojas del tercio medio-inferior. Busque huevos en el haz (puntos blancos) y minas frescas (verdes-translucidas vs. marrones viejas). Control exitoso: >30% de minas con agujeros de salida de parasitoides. Empeora: minas en hojas del brote terminal, reduccion de area foliar fotosintetica >20%."},
+        {"num": "05", "titulo": "Registro y trazabilidad", "texto": "Lleve registro de % hojas minadas, % parasitismo estimado, presencia de enemigos naturales, aplicaciones biologicas realizadas y condiciones climaticas (temperatura, precipitacion). Este seguimiento permite a IHCAFE validar umbrales de accion especificos para su microregion y ajustar calendarios de liberacion de parasitoides."}
+    ],
+    "sana": [
+        {"num": "01", "titulo": "Diferenciacion a simple vista", "texto": "Hoja sana presenta color verde intenso y uniforme, venacion bien definida, epidermis intacta sin pustulas, manchas, minas ni broncizado. El borde foliar es liso, sin necrosis. Asegurese de que no sea una hoja asintomatica en etapa muy temprana de infeccion: revise el enves con lupa para descartar presencia de acaros o esporas incipientes."},
+        {"num": "02", "titulo": "Manejo agronomico preventivo y correctivo", "texto": "Mantener fertilizacion balanceada N-P-K segun analisis de suelo y foliar. Aplicar cal dolomitica si pH <5.5 para mejorar absorcion de Ca y Mg. Realizar poda de mantenimiento anual. Mantener sombra al 30-40% para proteger de estres termico sin generar exceso de humedad. Aplicar fungicidas preventivos antes de epocas de lluvia intensa si hay historial de roya en la zona."},
+        {"num": "03", "titulo": "Consulta a un tecnico IHCAFE", "texto": "Programar visita tecnica semestral para analisis foliar completo (N, P, K, Ca, Mg, S, B, Zn, Mn, Fe) y evaluacion del sistema de sombra. El tecnico identificara deficiencias ocultas que predisponen al ataque futuro. Aproveche la visita para actualizar su calendario fitosanitario segun pronostico climatico."},
+        {"num": "04", "titulo": "Monitoreo y seguimiento", "texto": "Realice inspecciones fitosanitarias quincenales durante la epoca de crecimiento activo (lluvias). Evalue 30 plantas distribuidas al azar. Parametros de salud: brotes con 2-3 pares de hojas sanas, ausencia de clorosis, firmeza foliar al tacto. Detecte a tiempo cualquier cambio: mancha, pustula o deformacion."},
+        {"num": "05", "titulo": "Registro y trazabilidad", "texto": "Documente resultados de analisis de suelo/foliar, programa de fertilizacion, podas realizadas, control de malezas y monitoreos fitosanitarios. Mantenga historial fotografico de la evolucion del follaje. Esta documentacion es esencial para certificaciones de origen, trazabilidad de compradores y acceso a programas de IHCAFE de cafés de especialidad."}
+    ]
+}
+
 HISTORY_FILE = "diagnosis_history.json"
 
 
@@ -309,7 +386,7 @@ def guardar_historial():
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(st.session_state.history, f, ensure_ascii=False, indent=2)
     except Exception:
-        pass  # en despliegues de solo lectura, el historial vive solo en la sesion
+        pass
 
 
 # ----------------------------------------------------
@@ -348,6 +425,7 @@ text_main = "#F5EFE9" if is_dark else "#2C1A11"
 text_sub = "#B8ACA2" if is_dark else "#6B5E55"
 border_color = "#36271D" if is_dark else "#EAE3D9"
 highlight_bg = "#271B14" if is_dark else "#F5F1EA"
+rec_box_bg = "#1A120D" if is_dark else "#F0EBE3"
 
 st.markdown(f"""
 <style>
@@ -361,10 +439,6 @@ st.markdown(f"""
         background-color: {bg_body};
         color: {text_main};
     }}
-
-    /* =====================================================
-       FIX MODO CLARO: forzar colores en componentes nativos
-       ===================================================== */
 
     /* Radio buttons / Tabs */
     [data-testid="stRadio"] label,
@@ -461,23 +535,73 @@ st.markdown(f"""
         margin-left: 6px;
     }}
 
-    /* Main Card Frame */
-    .agro-card-frame {{
-        background-color: {card_bg};
-        border: 1px solid {border_color};
-        border-radius: 32px;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.06);
-        padding: 0px;
-        overflow: hidden;
+    /* Recommendation Section Cards */
+    .rec-section {{
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+        padding: 14px 0;
+        border-bottom: 1px solid {border_color};
     }}
-
-    .recommendation-box {{
-        background-color: {highlight_bg};
+    .rec-section:last-child {{
+        border-bottom: none;
+    }}
+    .rec-num {{
+        min-width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background-color: #2D5A3D;
+        color: #FFFFFF;
+        font-size: 12px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }}
+    .rec-title {{
+        font-size: 14px;
+        font-weight: 700;
+        color: {text_main};
+        margin-bottom: 4px;
+    }}
+    .rec-text {{
+        font-size: 13px;
+        color: {text_sub};
+        line-height: 1.6;
+        margin: 0;
+    }}
+    .rec-container {{
+        background-color: {rec_box_bg};
         border: 1px solid {border_color};
         border-radius: 20px;
-        padding: 20px;
+        padding: 20px 24px;
         margin-top: 16px;
         margin-bottom: 20px;
+    }}
+    .rec-header {{
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+    }}
+    .rec-header-icon {{
+        background-color: #2C1A11;
+        color: #FCD34D;
+        border-radius: 50%;
+        width: 20px;
+        height: 20px;
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 10px;
+        font-weight: bold;
+    }}
+    .rec-header-label {{
+        font-size: 10px;
+        font-weight: bold;
+        letter-spacing: 1px;
+        color: #8C7D73;
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -547,17 +671,20 @@ if tab_choice == "DIAGNOSTICO":
                     else:
                         recomendacion = obtener_recomendacion(resultado["clase"], resultado.get("clase_secundaria"))
                         if resultado["estado"] == "coinfeccion":
-                            recomendacion = (
+                            coinfeccion_nota = (
                                 f"🔎 Posible coinfeccion con {COFFEE_DISEASES[resultado['clase_secundaria']]['name']} "
-                                f"({resultado['confianza_secundaria']*100:.1f}%). Se recomienda inspeccion adicional. \n\n"
-                                + recomendacion
+                                f"({resultado['confianza_secundaria']*100:.1f}%). Se recomienda inspeccion adicional."
                             )
+                        else:
+                            coinfeccion_nota = None
+
                         new_item = {
                             "id": f"DIAG-{int(datetime.now().timestamp())}",
                             "primaryDisease": resultado["clase"],
                             "primaryConfidence": resultado["confianza"],
                             "timestamp": datetime.now().strftime("%d/%m/%Y %H:%M"),
                             "recommendation": recomendacion,
+                            "coinfeccion": coinfeccion_nota,
                         }
                         st.session_state.history.insert(0, new_item)
                         st.session_state.current_diag = new_item
@@ -584,7 +711,7 @@ if tab_choice == "DIAGNOSTICO":
 
         if cd is None:
             st.markdown(f"""
-            <div class="recommendation-box" style="text-align:center;">
+            <div class="rec-container" style="text-align:center;">
                 <p style="font-size:13px; color:{text_sub}; margin:0;">
                     Aun no se ha realizado ningun diagnostico. Sube una fotografia de una hoja de cafe
                     y presiona <strong>DIAGNOSTICAR AHORA</strong> para comenzar.
@@ -616,18 +743,48 @@ if tab_choice == "DIAGNOSTICO":
                 </div>
                 """, unsafe_allow_html=True)
 
-            # Recommendation box
-            st.markdown(f"""
-            <div class="recommendation-box">
-                <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-                    <span style="background-color:#2C1A11; color:#FCD34D; border-radius:50%; width:20px; height:20px; display:inline-flex; justify-content:center; align-items:center; font-size:10px; font-weight:bold;">Q</span>
-                    <span style="font-size:10px; font-weight:bold; letter-spacing:1px; color:#8C7D73;">RECOMENDACION GROQ AI / IHCAFE</span>
+            # Coinfeccion alerta
+            if cd.get("coinfeccion"):
+                st.warning(cd["coinfeccion"])
+
+            # Recommendation box estructurado
+            rec_secciones = cd.get("recommendation", [])
+            if isinstance(rec_secciones, list) and len(rec_secciones) > 0:
+                html_rec = f"""
+                <div class="rec-container">
+                    <div class="rec-header">
+                        <span class="rec-header-icon">💡</span>
+                        <span class="rec-header-label">ORIENTACION Y MANEJO PREVENTIVO</span>
+                    </div>
+                    <p style="font-size:12px; color:{text_sub}; margin-bottom:12px;">
+                        Aqui tienes una recomendacion tecnica detallada para manejar la situacion:
+                    </p>
+                """
+                for sec in rec_secciones:
+                    html_rec += f"""
+                    <div class="rec-section">
+                        <div class="rec-num">{sec['num']}</div>
+                        <div>
+                            <div class="rec-title">{sec['titulo']}</div>
+                            <p class="rec-text">{sec['texto']}</p>
+                        </div>
+                    </div>
+                    """
+                html_rec += "</div>"
+                st.markdown(html_rec, unsafe_allow_html=True)
+            else:
+                # Fallback texto plano
+                st.markdown(f"""
+                <div class="rec-container">
+                    <div class="rec-header">
+                        <span class="rec-header-icon">💡</span>
+                        <span class="rec-header-label">RECOMENDACION GROQ AI / IHCAFE</span>
+                    </div>
+                    <p style="font-size:13px; font-style:italic; line-height:1.6; border-left: 2px solid #2C1A11; padding-left: 12px; margin:0; white-space: pre-line;">
+                        "{rec_secciones if isinstance(rec_secciones, str) else 'Sin recomendacion disponible.'}"
+                    </p>
                 </div>
-                <p style="font-size:13px; font-style:italic; line-height:1.6; border-left: 2px solid #2C1A11; padding-left: 12px; margin:0; white-space: pre-line;">
-                    "{cd['recommendation']}"
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
             # Historial Reciente List
             st.markdown("""
